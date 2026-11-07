@@ -1,7 +1,8 @@
 /*
  * Gigaspark OS - zRAM Compression Header (Fase 16: LRU)
  * Compresion RLE con politica de eviccion LRU.
- * Sin dependencias externas, C puro, optimizado para embedded.
+ * Cache volatil en C; una eviccion descarta datos, NO los guarda en SD.
+* Las funciones de tabla comparten estado: usar un unico hilo propietario.
  */
 
 #ifndef GIGASPARK_ZRAM_COMP_H
@@ -34,6 +35,7 @@ size_t zram_compress(const uint8_t *src, size_t src_len,
  * @param dst       Buffer de salida para datos descomprimidos.
  * @param dst_len   Tamano del buffer de salida.
  * @return          Bytes escritos en dst, o 0 si falla.
+ * Una longitud impar o un count cero se rechazan antes de escribir.
  */
 size_t zram_decompress(const uint8_t *src, size_t src_len,
 		       uint8_t *dst, size_t dst_len);
@@ -42,7 +44,7 @@ size_t zram_decompress(const uint8_t *src, size_t src_len,
  * Comprime y almacena un bloque en la tabla LRU.
  * Si la tabla esta llena, expulsa la victima LRU.
  *
- * @param handle    Handle del bloque a comprimir.
+ * @param handle    Handle del bloque a comprimir (distinto de 0).
  * @param src       Datos fuente.
  * @param src_len   Longitud de datos fuente.
  * @return          Tamano comprimido, o 0 si falla.

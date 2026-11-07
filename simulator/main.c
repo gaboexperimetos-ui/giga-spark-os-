@@ -235,12 +235,12 @@ static void wstatus(uint32_t t, uint8_t bat) {
 	uint32_t s = t / 1000;
 	char tb[8];
 	tb[0]='0'+(s/3600)%24/10; tb[1]='0'+(s/3600)%24%10;
-	tb[2]=':'; tb[3]='0'+(s/60)%10; tb[4]='0'+(s/60)%10;
+	tb[2]=':'; tb[3]='0'+(s/60)%60/10; tb[4]='0'+(s/60)%10;
 	tb[5]=0;
 	fstr(SCR_W/2-20, 4, tb, LGR, 1);
 }
 
-static int nby;
+static int nby = SCR_H - 44;
 static void wnav(int sel) {
 	nby = SCR_H - 44;
 	frect(0, nby, SCR_W, 44, NAV);
@@ -583,117 +583,190 @@ static void app_launch(uint32_t t, uint8_t bat) {
  * MAIN
  * ============================================================ */
 
+/* Only these two demo screens change without input or a status update. */
+static bool screen_is_animated(int screen) {
+	return screen == 1 || screen == 3;
+}
+
+static void render_screen(int screen, uint32_t t, uint8_t bat) {
+	memset(fb, 0, sizeof(fb));
+	switch (screen) {
+	case 1: app_scope(t, bat); break;
+	case 2: app_psu(t, bat); break;
+	case 3: app_flip(t, bat); break;
+	case 4: app_wifi(t, bat); break;
+	case 5: app_set(t, bat); break;
+	case 6: app_about(t, bat); break;
+	default: app_launch(t, bat); break;
+	}
+}
+
+/* Returns true when the framebuffer needs repainting. */
+static bool handle_event(const SDL_Event *ev, int *screen, bool *run) {
+	switch (ev->type) {
+	case SDL_QUIT: *run = false; return false;
+	case SDL_WINDOWEVENT:
+		return ev->window.event == SDL_WINDOWEVENT_EXPOSED ||
+		       ev->window.event == SDL_WINDOWEVENT_SIZE_CHANGED ||
+		       ev->window.event == SDL_WINDOWEVENT_RESTORED;
+	case SDL_KEYDOWN:
+		switch (ev->key.keysym.sym) {
+		case SDLK_q: *run = false; return false;
+		case SDLK_ESCAPE: *screen = 0; return true;
+		case SDLK_UP:
+			if (*screen == 0 && la_sel > 0) { --la_sel; return true; }
+			if (*screen == 5 && st_sel > 0) { --st_sel; return true; }
+			break;
+		case SDLK_DOWN:
+			if (*screen == 0 && la_sel < LA_N - 1) { ++la_sel; return true; }
+			if (*screen == 5 && st_sel < 3) { ++st_sel; return true; }
+			break;
+		case SDLK_RETURN:
+			if (*screen == 0) { *screen = la_sel + 1; return true; }
+			break;
+		case SDLK_1: case SDLK_2: case SDLK_3:
+		case SDLK_4: case SDLK_5: case SDLK_6:
+			*screen = ev->key.keysym.sym - SDLK_1 + 1;
+			return true;
+		default: break;
+		}
+		break;
+	case SDL_MOUSEBUTTONDOWN:
+		if (ev->button.button == SDL_BUTTON_LEFT) {
+			int mx = ev->button.x / SCALE, my = ev->button.y / SCALE;
+			if (my >= nby) {
+				int bw = 120, gap = (SCR_W - bw * 3) / 4;
+				if (my >= nby + 7 && my < nby + 37) {
+					for (int i = 0; i < 2; ++i) {
+						int bx = gap + i * (bw + gap);
+						if (mx >= bx && mx < bx + bw) { *screen = 0; return true; }
+					}
+				}
+				return false;
+			}
+			if (*screen == 0) {
+				for (int i = 0; i < LA_N; ++i) {
+					int ax = 20 + (i % 2) * 220, ay = 70 + (i / 2) * 60;
+					if (mx >= ax && mx < ax + 200 && my >= ay && my < ay + 50) {
+						*screen = i + 1;
+						return true;
+					}
+				}
+			}
+		}
+		break;
+	default: break;
+	}
+	return false;
+}
+
+static int present_frame(SDL_Renderer *ren, SDL_Texture *tex, int screen,
+			 uint32_t t, uint8_t bat) {
+	render_screen(screen, t, bat);
+	if (SDL_UpdateTexture(tex, NULL, fb, SCR_W * sizeof(uint16_t)) < 0 ||
+	    SDL_RenderClear(ren) < 0 || SDL_RenderCopy(ren, tex, NULL, NULL) < 0) {
+		fprintf(stderr, "SDL2 render: %s\n", SDL_GetError());
+		return -1;
+	}
+	SDL_RenderPresent(ren);
+	return 0;
+}
+
+/* Headless CI smoke test: exercise every real screen and SDL texture upload. */
+static int smoke_test(void) {
+	SDL_Window *win = SDL_CreateWindow("Gigaspark smoke", 0, 0, WIN_W, WIN_H, SDL_WINDOW_HIDDEN);
+	if (!win) return 1;
+	SDL_Renderer *ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_SOFTWARE);
+	SDL_Texture *tex = ren ? SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGB565,
+						  SDL_TEXTUREACCESS_STREAMING, SCR_W, SCR_H) : NULL;
+	int result = tex ? 0 : 1;
+	for (int screen = 0; tex && screen < 7; ++screen)
+		result |= present_frame(ren, tex, screen, 1000, 100);
+	if (tex) SDL_DestroyTexture(tex);
+	if (ren) SDL_DestroyRenderer(ren);
+	SDL_DestroyWindow(win);
+	return result ? 1 : 0;
+}
+
 int main(int argc, char *argv[]) {
-	(void)argc; (void)argv;
-
-	printf("Gigaspark OS - Gemelo Digital v2\n");
-	printf("480x272 exacto (Giga Display Shield)\n");
-
+	bool smoke = argc == 2 && strcmp(argv[1], "--smoke") == 0;
+	if (argc > 1 && !smoke) {
+		fprintf(stderr, "Uso: %s [--smoke]\n", argv[0]);
+		return 2;
+	}
 	if (SDL_Init(SDL_INIT_VIDEO) < 0) {
 		fprintf(stderr, "SDL2: %s\n", SDL_GetError());
 		return 1;
 	}
+	if (smoke) {
+		int result = smoke_test();
+		SDL_Quit();
+		if (result == 0) puts("Gigaspark: 7 screens rendered successfully");
+		return result;
+	}
 
 	SDL_Window *win = SDL_CreateWindow("Gigaspark OS - Gemelo Digital",
 		SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, WIN_W, WIN_H, SDL_WINDOW_SHOWN);
-	if (!win) { SDL_Quit(); return 1; }
-
-	SDL_Renderer *ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+	if (!win) {
+		fprintf(stderr, "SDL2 window: %s\n", SDL_GetError());
+		SDL_Quit();
+		return 1;
+	}
+	/* Cap animation in software; VSync plus a 33 ms sleep can halve FPS. */
+	SDL_Renderer *ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED);
 	if (!ren) ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_SOFTWARE);
-
-	SDL_Texture *tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGB565,
-		SDL_TEXTUREACCESS_STREAMING, SCR_W, SCR_H);
-
-	memset(fb, 0, sizeof(fb));
-
-	bool run = true;
-	int screen = 0;
-	SDL_Event ev;
-	uint8_t bat = 100;
-
-	while (run) {
-		Uint32 fs = SDL_GetTicks();
-
-		if (fs % 30000 < FRAME) { if (bat > 5) bat--; }
-
-		while (SDL_PollEvent(&ev)) {
-			switch (ev.type) {
-			case SDL_QUIT: run = false; break;
-			case SDL_KEYDOWN:
-				switch (ev.key.keysym.sym) {
-				case SDLK_q: run = false; break;
-				case SDLK_ESCAPE: screen = 0; break;
-				case SDLK_UP:
-					if (screen==0 && la_sel>0) la_sel--;
-					if (screen==5 && st_sel>0) st_sel--;
-					break;
-				case SDLK_DOWN:
-					if (screen==0 && la_sel<LA_N-1) la_sel++;
-					if (screen==5 && st_sel<3) st_sel++;
-					break;
-				case SDLK_RETURN:
-					if (screen==0) screen = la_sel + 1;
-					break;
-				case SDLK_1: screen=1; break;
-				case SDLK_2: screen=2; break;
-				case SDLK_3: screen=3; break;
-				case SDLK_4: screen=4; break;
-				case SDLK_5: screen=5; break;
-				case SDLK_6: screen=6; break;
-				default: break;
-				}
-				break;
-			case SDL_MOUSEBUTTONDOWN:
-				if (ev.button.button == SDL_BUTTON_LEFT) {
-					int mx = ev.button.x / SCALE;
-					int my = ev.button.y / SCALE;
-					if (my >= nby) {
-						int bw=120, g=(SCR_W-bw*3)/4;
-						for (int i=0;i<3;i++) {
-							int bx=g+i*(bw+g);
-							if (mx>=bx && mx<bx+bw && my>=nby+7 && my<nby+37) {
-								if (i==0) screen=0;
-								if (i==1 && screen>0) screen=0;
-							}
-						}
-					}
-					if (screen==0) {
-						int cw=200,rh=50,sx=20,sy=70;
-						for (int i=0;i<LA_N;i++) {
-							int c=i%2,r=i/2;
-							int ax=sx+c*(cw+20),ay=sy+r*(rh+10);
-							if (mx>=ax&&mx<ax+cw&&my>=ay&&my<ay+rh) screen=i+1;
-						}
-					}
-				}
-				break;
-			}
-		}
-
-		memset(fb, 0, sizeof(fb));
-		switch (screen) {
-		case 0: app_launch(fs, bat); break;
-		case 1: app_scope(fs, bat); break;
-		case 2: app_psu(fs, bat); break;
-		case 3: app_flip(fs, bat); break;
-		case 4: app_wifi(fs, bat); break;
-		case 5: app_set(fs, bat); break;
-		case 6: app_about(fs, bat); break;
-		default: app_launch(fs, bat); break;
-		}
-
-		SDL_UpdateTexture(tex, NULL, fb, SCR_W * sizeof(uint16_t));
-		SDL_RenderClear(ren);
-		SDL_RenderCopy(ren, tex, NULL, NULL);
-		SDL_RenderPresent(ren);
-
-		Uint32 ft = SDL_GetTicks() - fs;
-		if (ft < FRAME) SDL_Delay(FRAME - ft);
+	SDL_Texture *tex = ren ? SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGB565,
+		SDL_TEXTUREACCESS_STREAMING, SCR_W, SCR_H) : NULL;
+	if (!tex) {
+		fprintf(stderr, "SDL2 renderer/texture: %s\n", SDL_GetError());
+		if (ren) SDL_DestroyRenderer(ren);
+		SDL_DestroyWindow(win);
+		SDL_Quit();
+		return 1;
 	}
 
+	bool run = true, dirty = true;
+	int screen = 0, result = 0;
+	uint8_t bat = 100;
+	uint32_t last_battery = SDL_GetTicks(), last_minute = UINT32_MAX;
+	SDL_Event ev;
+	while (run) {
+		uint32_t frame_start = SDL_GetTicks();
+		if (!screen_is_animated(screen) && !dirty) {
+			uint32_t now = SDL_GetTicks();
+			uint32_t elapsed = now - last_battery;
+			uint32_t wait = elapsed >= 30000 ? 1 : 30000 - elapsed;
+			uint32_t to_minute = 60000 - now % 60000;
+			if (to_minute < wait) wait = to_minute;
+			if (SDL_WaitEventTimeout(&ev, (int)wait))
+				dirty = handle_event(&ev, &screen, &run) || dirty;
+		}
+		while (SDL_PollEvent(&ev))
+			dirty = handle_event(&ev, &screen, &run) || dirty;
+		if (!run) break;
+
+		uint32_t now = SDL_GetTicks();
+		if (now - last_battery >= 30000) {
+			if (bat > 5) --bat;
+			last_battery = now;
+			dirty = true;
+		}
+		if (now / 60000 != last_minute) {
+			last_minute = now / 60000;
+			dirty = true;
+		}
+		if (dirty || screen_is_animated(screen)) {
+			if (present_frame(ren, tex, screen, now, bat) < 0) { result = 1; break; }
+			dirty = false;
+		}
+		if (screen_is_animated(screen)) {
+			uint32_t elapsed = SDL_GetTicks() - frame_start;
+			if (elapsed < FRAME) SDL_Delay(FRAME - elapsed);
+		}
+	}
 	SDL_DestroyTexture(tex);
 	SDL_DestroyRenderer(ren);
 	SDL_DestroyWindow(win);
 	SDL_Quit();
-	return 0;
+	return result;
 }

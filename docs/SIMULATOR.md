@@ -40,10 +40,20 @@ make
 ```bash
 cd simulator
 mkdir build && cd build
-cmake ..
-make
-./gigaspark_sim
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+./build/gigaspark_sim
 ```
+
+### Prueba automatica sin ventana
+
+```bash
+SDL_VIDEODRIVER=dummy ./build/gigaspark_sim --smoke
+# Con Make:
+make test
+```
+
+Las pantallas estaticas solo se redibujan con entrada, cambio de reloj o bateria. El bucle duerme en lugar de renderizar 30 FPS continuamente. Las animaciones de osciloscopio y RF mantienen el limite de 30 FPS.
 
 ### Opcion 3: Compilar manualmente
 ```bash
@@ -126,4 +136,4 @@ sudo apt install libsdl2-dev
 Asegurate de tener pkg-config instalado y SDL2 detectado correctamente.
 
 ### Ventana muy pequena/grande
-Edita `WINDOW_SCALE` en `main.c` (default: 2x = 960x544 pixeles).
+Edita `SCALE` en `main.c (default: 2x = 960x544 pixeles).

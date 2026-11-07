@@ -200,6 +200,9 @@ La ventana se abre con el launcher. Usa el mouse como touch, flechas para navega
 
 Ver [docs/SIMULATOR.md](docs/SIMULATOR.md) para instrucciones detalladas.
 
+Para ejecutar la prueba automatica sin ventana: `SDL_VIDEODRIVER=dummy ./gigaspark_sim --smoke`.
+Las optimizaciones, mediciones y limites de verificacion estan en [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
+
 ---
 
 ## Inicio Rapido (Hardware)
