@@ -79,14 +79,40 @@ El puente lee comandos por stdin y responde por stdout un fotograma crudo:
 |---|---|
 | `F` | renderizar el estado actual |
 | `K <keycode>` | inyectar tecla SDL (27=Escape, 13=Enter, 49–54=1–6) |
-| `M <x> <y>` | toque en coordenadas de pantalla (0–479, 0–271) |
+| `M <x> <y>` | toque en coordenadas de pantalla (0–799, 0–479) |
 | `Q` | terminar |
 
-Respuesta: cabecera `<II` (pantalla, batería) + `480*272*2` bytes RGB565.
+Respuesta: cabecera `<II` (pantalla, batería) + `800*480*2` = **768000** bytes
+RGB565 (768008 con cabecera).
 El servidor HTTP traduce eso a `/frame.raw` y `/input`.
+
+## Capturas de las 7 pantallas
+
+```bash
+bash tools/preview/build.sh
+python3 tools/preview/shots.py            # -> build_preview/shots/*.png
+python3 tools/preview/shots.py --screen 2 --tap 356 308   # con un toque
+```
+
+`shots.py` habla con el puente real y escribe PNG con `zlib`/`struct` (no necesita
+PIL). **Sirve para mirar la interfaz, no solo para medir tests**: los seis defectos
+de layout de esta pasada (transiciones verticales ausentes en CH2, hueco muerto en
+Fuente, solapamiento del contador de página en WiFi, flecha atrás con aspecto
+activo pero inerte, etiqueta encogida, hueco en Acerca de) pasaban el smoke test en
+verde y solo se vieron renderizando a PNG.
+
+## Reloj del puente
+
+`handle_event()` fija plazos con `SDL_GetTicks()` (resaltado de pulsación de
+110 ms, fin del escaneo WiFi). El puente debe usar **el mismo reloj** y expirar
+esos estados; si mide el tiempo con `CLOCK_MONOTONIC` aparte, el botón pulsado se
+queda resaltado para siempre. Por eso inicializa `SDL_INIT_TIMER` y usa
+`SDL_GetTicks()`.
 
 ## Alcance
 
-Renderiza el simulador tal como está hoy: **480×272**. El GIGA Display Shield
-real es 480×800 (ST7701, DSI); esa migración está pendiente y documentada en
-`docs/HARDWARE_FIDELITY.md`. Este preview no mide rendimiento ni valida hardware.
+Renderiza el simulador tal como está hoy: **800×480**, el modo landscape del GIGA
+Display Shield real (480×800 nativo, ST7701 por DSI, táctil GT911). Objetivos
+táctiles de **80–96 px** = 8.6–10.4 mm en el panel real. Ver
+`docs/HARDWARE_FIDELITY.md`. Este preview no mide rendimiento ni valida hardware:
+el firmware no se compila en este entorno.

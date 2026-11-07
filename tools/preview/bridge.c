@@ -1,5 +1,10 @@
 /* Puente local de vista previa: renderiza el simulador C real y expone
  * fotogramas RGB565 por stdout. No forma parte del firmware.
+ *
+ * Importa el reloj: handle_event() fija plazos con SDL_GetTicks() (resaltado
+ * de pulsacion, fin del escaneo WiFi). Si el puente midiera el tiempo con
+ * otro reloj, esos plazos nunca expirarian y el boton pulsado quedaria
+ * resaltado para siempre. Por eso aqui se usa SDL_GetTicks() tambien.
  */
 #define SDL_MAIN_HANDLED
 #define main gigaspark_simulator_main
@@ -11,19 +16,19 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
-
-static uint32_t now_ms(void) {
-	struct timespec ts;
-	clock_gettime(CLOCK_MONOTONIC, &ts);
-	return (uint32_t)(ts.tv_sec * 1000u + ts.tv_nsec / 1000000u);
-}
 
 int main(void) {
 	int screen = 0;
 	bool run = true;
 	uint8_t bat = 100;
-	uint32_t start = now_ms();
+
+	SDL_SetMainReady();
+	/* Solo el temporizador: render_screen() escribe en fb, no abre ventana. */
+	if (SDL_Init(SDL_INIT_TIMER) < 0) {
+		fprintf(stderr, "SDL_Init(timer): %s\n", SDL_GetError());
+		return 1;
+	}
+	uint32_t start = SDL_GetTicks();
 	uint32_t last_battery = start;
 	char line[128];
 
@@ -51,7 +56,10 @@ int main(void) {
 			}
 		}
 
-		uint32_t now = now_ms();
+		uint32_t now = SDL_GetTicks();
+		/* Expiracion de estados temporales, igual que el bucle SDL real. */
+		if (press_live && (int32_t)(now - press_until) >= 0) press_live = false;
+		if (wf_scan_until && (int32_t)(now - wf_scan_until) >= 0) wf_scan_until = 0;
 		if (now - last_battery >= 30000u) {
 			if (bat > 5) --bat;
 			last_battery = now;
@@ -62,5 +70,6 @@ int main(void) {
 		fwrite(fb, sizeof(fb), 1, stdout);
 		fflush(stdout);
 	}
+	SDL_Quit();
 	return 0;
 }

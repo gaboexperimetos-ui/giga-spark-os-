@@ -10,7 +10,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-SCR_W, SCR_H = 480, 272
+SCR_W, SCR_H = 800, 480
 FRAME_BYTES = SCR_W * SCR_H * 2
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent.parent
@@ -30,7 +30,7 @@ header { text-align: center; margin-bottom: 18px; }
 h1 { margin: 0 0 6px; font-size: clamp(22px, 4vw, 34px); letter-spacing: .04em; }
 p { margin: 4px 0; color: #9fb3cc; }
 .device { padding: 18px; border-radius: 26px; background: linear-gradient(145deg, #202a36, #0b0f14); box-shadow: 0 24px 70px #000c, inset 0 0 0 2px #33415580; }
-canvas { display: block; width: min(92vw, 960px); height: auto; aspect-ratio: 480 / 272; image-rendering: pixelated; background: #000; border-radius: 8px; cursor: pointer; touch-action: none; }
+canvas { display: block; width: min(92vw, 960px); height: auto; aspect-ratio: 800 / 480; image-rendering: pixelated; background: #000; border-radius: 8px; cursor: pointer; touch-action: none; }
 .bar { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin: 18px 0 8px; }
 button { background: #142033; color: #dff4ff; border: 1px solid #2d4a66; border-radius: 10px; padding: 9px 13px; font: inherit; cursor: pointer; }
 button:hover { background: #1d3550; border-color: #49b6ff; }
@@ -41,9 +41,9 @@ button:hover { background: #1d3550; border-color: #49b6ff; }
 <body>
 <header>
   <h1>GIGASPARK OS</h1>
-  <p>Simulador en vivo · pantalla 480×272 renderizada por el código C real</p>
+  <p>Simulador en vivo · pantalla 800×480 renderizada por el código C real</p>
 </header>
-<div class="device"><canvas id="screen" width="480" height="272"></canvas></div>
+<div class="device"><canvas id="screen" width="800" height="480"></canvas></div>
 <div class="bar">
   <button data-key="Escape">Inicio</button>
   <button data-key="ArrowUp">↑</button>
@@ -59,6 +59,7 @@ button:hover { background: #1d3550; border-color: #49b6ff; }
 <div class="status" id="status">Conectando…</div>
 <p class="hint">Haz clic en la pantalla para tocar. Usa flechas + Enter, Escape para volver, o las teclas 1–6. El osciloscopio y RF se animan en vivo.</p>
 <script>
+const SCR_MAX_X = 799, SCR_MAX_Y = 479;
 const canvas = document.getElementById('screen');
 const ctx = canvas.getContext('2d');
 const statusEl = document.getElementById('status');
@@ -68,7 +69,7 @@ let screen = 0, battery = 100, busy = false, lastDraw = 0, lastStatic = 0;
 
 function draw(buf) {
   const px = new Uint16Array(buf);
-  const img = ctx.createImageData(480, 272);
+  const img = ctx.createImageData(800, 480);
   const d = img.data;
   for (let i = 0, j = 0; i < px.length; i++, j += 4) {
     const c = px[i];
@@ -109,8 +110,8 @@ async function tick(ts) {
 canvas.addEventListener('pointerdown', async e => {
   e.preventDefault();
   const rect = canvas.getBoundingClientRect();
-  const x = Math.max(0, Math.min(479, Math.floor((e.clientX - rect.left) * 480 / rect.width)));
-  const y = Math.max(0, Math.min(271, Math.floor((e.clientY - rect.top) * 272 / rect.height)));
+  const x = Math.max(0, Math.min(SCR_MAX_X, Math.floor((e.clientX - rect.left) * 800 / rect.width)));
+  const y = Math.max(0, Math.min(SCR_MAX_Y, Math.floor((e.clientY - rect.top) * 480 / rect.height)));
   try { await send({ type:'mouse', x, y }); } catch (e) { statusEl.textContent = e.message; }
 });
 window.addEventListener('keydown', async e => {

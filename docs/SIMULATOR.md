@@ -2,9 +2,31 @@
 
 ## Que es el Simulador
 
-El simulador permite ejecutar apps de Gigaspark OS en tu PC sin necesidad del hardware fisico. Usa SDL2 para crear una ventana con un lienzo virtual de 480x272, y el raton funciona como pantalla tactil.
+El simulador permite ejecutar apps de Gigaspark OS en tu PC sin necesidad del hardware fisico. Usa SDL2 para crear una ventana de **800x480** (escala 1:1) y el raton funciona como pantalla tactil.
 
-> **Importante:** 480x272 es el lienzo actual del simulador, **no** la resolucion del Giga Display Shield real. El shield (ASX00039) lleva un panel de 3.97" con **480x800** nativo (800x480 en landscape), controlador **ST7701** por MIPI DSI y tactil **Goodix GT911**. La migracion del simulador y del firmware a esa resolucion esta pendiente. Detalles y fuentes en [HARDWARE_FIDELITY.md](HARDWARE_FIDELITY.md).
+> **Geometria:** el lienzo es **800x480**, el modo landscape del Giga Display Shield real (ASX00039): panel de 3.97" con **480x800** nativo, controlador **ST7701** por MIPI DSI y tactil **Goodix GT911**. Antes era 480x272, una resolucion que no corresponde a ningun panel de este shield; ya esta migrada. Fuentes y calculos en [HARDWARE_FIDELITY.md](HARDWARE_FIDELITY.md).
+
+### Diseno tactil
+
+El panel mide 86.47 x 51.88 mm utiles, o sea **0.1081 mm/pixel**. Eso convierte el
+tamano de los botones en una cuestion fisica, no estetica:
+
+| Lado menor | mm reales | Veredicto |
+|---|---:|---|
+| 36 px | 3.9 mm | inviable con el dedo |
+| 48 px | 5.2 mm | insuficiente |
+| **80 px** | **8.6 mm** | minimo de este simulador (`TOUCH_MIN`) |
+| 96 px | 10.4 mm | comodo |
+
+Todo objetivo tactil mide **>= 80 px** en su lado menor, y un test lo comprueba en
+las 7 pantallas (`tests/host/test_sim_ui.c`). El layout reserva 56 px de barra de
+estado y un riel lateral de 96 px (ATRAS / HOME / MENU) siempre alcanzable.
+
+**Dibujo y toque no pueden separarse:** `btn()` dibuja el boton y registra su zona
+tactil en la misma llamada (`hit_add`). Antes se dibujaban botones sin zona, asi
+que la interfaz se veia bien pero no respondia. Un boton desactivado se dibuja
+apagado (`BS_OFF`) y **no** registra zona: no hay flechas que parezcan activas y no
+hagan nada.
 
 ## Dependencias
 
@@ -91,7 +113,7 @@ simulator/
 
 ### Componentes
 
-1. **Framebuffer** (`sim_fb`): Array 480x272 de uint16_t (RGB565). El formato RGB565 si coincide con el del panel real; la resolucion todavia no.
+1. **Framebuffer** (`fb`): Array 800x480 de uint16_t (RGB565), 768000 bytes. Tanto el formato como la resolucion coinciden con el panel real en landscape.
 2. **SDK API Table**: Tabla de funciones en `sdk_stubs.c` que implementa `fill_rect`, `draw_text`, `get_touch`, etc. usando SDL2.
 3. **Launcher**: Menu interactivo que muestra la lista de apps del sistema.
 4. **Touch**: El raton de la PC simula el touchscreen (click = toque).
@@ -100,7 +122,7 @@ simulator/
 
 | Caracteristica | Hardware (STM32) | Simulador (PC) |
 |---------------|------------------|----------------|
-| Pantalla | 480x800 nativo, ST7701 via MIPI DSI | Ventana SDL2 480x272 |
+| Pantalla | 480x800 nativo, ST7701 via MIPI DSI | Ventana SDL2 800x480 (landscape, 1:1) |
 | Touch | Capacitivo Goodix GT911, 5 puntos | Raton (1 punto) |
 | CPU | Cortex-M7 480MHz | x86/ARM PC |
 | Memoria | 1 MB RAM + 8 MB SDRAM externa | Ilimitada |

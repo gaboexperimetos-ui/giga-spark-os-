@@ -55,13 +55,13 @@ gcc "${CFLAGS_EXTRA[@]}" -I"$INC_PARENT" $SDL_CFLAGS \
 
 echo "Puente compilado: $OUT/bridge"
 
-# Prueba de humo: un fotograma debe traer cabecera + 480*272*2 bytes.
+# Prueba de humo: un fotograma debe traer cabecera + 800*480*2 bytes.
 printf 'F\nQ\n' | "$OUT/bridge" > "$OUT/probe.bin"
 python3 - "$OUT/probe.bin" <<'PY'
 import struct, sys
 from pathlib import Path
 raw = Path(sys.argv[1]).read_bytes()
-expected = 8 + 480 * 272 * 2
+expected = 8 + 800 * 480 * 2
 if len(raw) != expected:
     sys.exit(f"fotograma inválido: {len(raw)} bytes, esperaba {expected}")
 screen, bat = struct.unpack("<II", raw[:8])

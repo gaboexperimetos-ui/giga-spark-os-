@@ -69,4 +69,24 @@ if(SDL2_FOUND)
     target_link_libraries(sim_bench PRIVATE PkgConfig::SDL2)
   endif()
   target_link_libraries(sim_bench PRIVATE gigaspark_warnings m)
+
+  # Regresion de la interfaz tactil: comprueba que cada boton dibujado tiene
+  # zona tactil y que el toque cambia el estado, no solo los pixeles.
+  #
+  # Bajo BUILD_TESTING porque incluye main.c y usa simbolos de la UI actual.
+  # compare.py construye un baseline antiguo con -DBUILD_TESTING=OFF: sin este
+  # guard intentaria compilar este test contra codigo que no tiene qs_open.
+  if(BUILD_TESTING)
+  add_executable(test_sim_ui test_sim_ui.c)
+  target_include_directories(test_sim_ui PRIVATE ${GIGASPARK_SIM_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../../common)
+  if(TARGET SDL2::SDL2)
+    target_link_libraries(test_sim_ui PRIVATE SDL2::SDL2)
+  elseif(TARGET SDL2::SDL2-static)
+    target_link_libraries(test_sim_ui PRIVATE SDL2::SDL2-static)
+  else()
+    target_link_libraries(test_sim_ui PRIVATE PkgConfig::SDL2)
+  endif()
+  target_link_libraries(test_sim_ui PRIVATE gigaspark_warnings m)
+  add_test(NAME test_sim_ui COMMAND test_sim_ui)
+  endif()
 endif()

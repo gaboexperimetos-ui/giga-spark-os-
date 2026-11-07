@@ -2,16 +2,17 @@
  * Gigaspark OS - Launcher Implementation
  * Application launcher menu for LVGL v9 display
  *
- * Requests the app list from M4 via IPC and creates a visual
- * button menu on the 480x272 virtual display.
+ * Requests the app list from M4 via IPC and creates a touch-friendly
+ * button grid on the 800x480 landscape display of the Giga Display Shield
+ * (ASX00039: 480x800 native, ST7701 over MIPI DSI, Goodix GT911 touch).
  *
- * NOTE: 480x272 is the current virtual canvas, not the real Giga Display
- * Shield. That panel is 480x800 native (ST7701 over MIPI DSI, not LTDC).
- * Migration pending; see docs/HARDWARE_FIDELITY.md.
+ * Geometry comes from nav_bar.h so it cannot drift from the display driver
+ * or from simulator/main.c. See docs/HARDWARE_FIDELITY.md.
  */
 
 #include "launcher.h"
 #include "ipc_protocol.h"
+#include "nav_bar.h"
 
 #include <zephyr/kernel.h>
 #include <zephyr/ipc/ipc_service.h>
@@ -147,10 +148,26 @@ int launcher_init(struct ipc_ept *ept)
 
 	/* Create buttons for each app */
 	if (app_count > 0) {
+		/*
+		 * Touch grid, derived from the panel geometry.
+		 * The old layout was a single column of 420x36 buttons: 36 px is
+		 * 3.9 mm on this panel (too small for a finger) and 8 apps ran
+		 * past the bottom of the screen. Two columns of >=87 px tiles fit
+		 * all APP_MAX_COUNT entries and stay above 9 mm.
+		 */
+		const int pad = 16, gap = 12, cols = 2;
+		const int rows = (APP_MAX_COUNT + cols - 1) / cols;
+		const int top = 56, bottom = 40;
+		const int tile_w = (SCREEN_WIDTH - 2 * pad - (cols - 1) * gap) / cols;
+		const int avail = SCREEN_HEIGHT - top - bottom;
+		const int tile_h = (avail - (rows - 1) * gap) / rows;
+
 		for (int i = 0; i < app_count && i < APP_MAX_COUNT; i++) {
+			const int col = i % cols, row = i / cols;
 			lv_obj_t *btn = lv_btn_create(main_screen);
-			lv_obj_set_size(btn, 420, 36);
-			lv_obj_align(btn, LV_ALIGN_TOP_MID, 0, 50 + i * 42);
+			lv_obj_set_size(btn, tile_w, tile_h);
+			lv_obj_set_pos(btn, pad + col * (tile_w + gap),
+				       top + row * (tile_h + gap));
 
 			/* Button style */
 			lv_obj_set_style_bg_color(btn, lv_color_hex(0x16213e), 0);

@@ -46,33 +46,69 @@ shield). Al revisar salieron más afirmaciones incorrectas:
 | Táctil "resistivo/capacitivo", FT6206 | Capacitivo Goodix GT911, 5 puntos |
 | "Memoria 512 KB RAM" | 1 MB RAM en el MCU + 8 MB SDRAM externa |
 
-### Ya corregido (comentarios y documentación)
+### Primera pasada: solo comentarios y documentación
 
-Se corrigieron las afirmaciones falsas sin tocar constantes ni comportamiento:
+Aquella pasada corrigió las afirmaciones falsas **sin tocar constantes ni
+comportamiento**: marcó 480×272 como lienzo virtual, dejó de llamar "LTDC display"
+al panel, sustituyó FT6206 por GT911 y arregló la cifra de RAM. Fue necesaria pero
+insuficiente: la interfaz seguía midiendo lo que no mide el hardware real. La
+migración efectiva está debajo.
 
-- `simulator/main.c` — cabecera y título de sección: 480×272 queda explícitamente
-  marcado como lienzo virtual, con la especificación real y por qué el ILI9341 no aplica.
 - `m7/src/launcher.c` — deja de llamar "LTDC display" al lienzo virtual.
-- `m7/src/nav_bar.h`, `m7/src/ui_manager.c` — dimensiones marcadas como virtuales.
 - `m7/src/ui_manager.c` — el comentario del touch ahora dice GT911 (no FT6206), y
   el del flush aclara que el panel va por DSI, no por LTDC.
-- `docs/SIMULATOR.md` — aviso explícito de que 480×272 no es el shield real, y la
-  tabla de diferencias ahora usa resolución, bus, táctil y memoria correctos.
+- `docs/SIMULATOR.md` — resolución, bus, táctil y memoria correctos.
 
-Verificado tras esos cambios: tests host 3/3, ASAN+UBSAN 3/3 y smoke del
-simulador 1/1 en verde.
+### Migración a 800×480: hecha en el simulador
 
-### Pendiente (requiere decisión aparte)
+El simulador C (`simulator/main.c`) se reescribió a **800×480, escala 1:1**, con
+layout pensado para el dedo y no para el ratón:
 
-La **migración real a 800×480** no se hizo, porque cambia layout, framebuffer,
-LVGL y los hashes de píxeles de los benchmarks:
+- `SCR_W 800`, `SCR_H 480`, `SCALE 1`. Framebuffer de **768000 bytes**.
+- Barra de estado de 56 px con el título de la pantalla activa; riel lateral de
+  96 px con ATRÁS / HOME / MENU, siempre en el mismo sitio.
+- **Todo objetivo táctil ≥ 80 px** de lado menor (8.6 mm). Un test lo verifica en
+  las 7 pantallas.
+- `btn()` dibuja y registra la zona táctil en la misma llamada, así que lo que se
+  ve y lo que responde al dedo no pueden divergir. Los botones desactivados se
+  dibujan apagados (`BS_OFF`) y no registran zona.
+- Atenuación de brillo en RGB565, igual que haría el panel.
 
-- `simulator/main.c` — `SCR_W`/`SCR_H` y todo el layout dibujado a mano.
-- `m7/src/nav_bar.h` — `SCREEN_WIDTH`/`SCREEN_HEIGHT` y `NAV_BAR_Y_START`.
-- `m7/src/ui_manager.c` — `DISPLAY_WIDTH`/`DISPLAY_HEIGHT`.
+Verificado: tests host **4/4** (incluido el nuevo `test_sim_ui`), ASAN+UBSAN **4/4**,
+smoke del simulador **1/1**, y toque real a través del puente web (mosaicos, +/−,
+salida, HOME, overlay, paginación WiFi).
+
+**Los tests en verde no bastaron.** Seis defectos de layout pasaban el smoke test y
+solo aparecieron al renderizar las 7 pantallas a PNG y mirarlas: transiciones
+verticales ausentes en CH2, ~100 px muertos en Fuente, el contador de página
+solapando el borde de la tarjeta en WiFi, una flecha atrás con aspecto activo pero
+inerte, una etiqueta encogida a escala 1 y hueco muerto en Acerca de. Para repetir
+esa revisión: `python3 tools/preview/shots.py`.
+
+### Firmware: constantes alineadas, sin verificar en placa
+
+Estos cambios son de código fuente y **no se pudieron compilar** (no hay toolchain
+ARM ni workspace Zephyr en este entorno):
+
+- `m7/src/nav_bar.h` — `SCREEN_WIDTH/HEIGHT` a 800×480; barra de 40 → **80 px**
+  (4.3 → 8.6 mm); `NAV_BAR_Y_START` y el botón HOME derivados de la geometría.
+- `m7/src/nav_bar.c` — la zona del HOME dejó de usar los literales `190..290`,
+  válidos solo para 480 px de ancho.
+- `m7/src/ui_manager.c` — `DISPLAY_WIDTH/HEIGHT` toman `SCREEN_WIDTH/HEIGHT` de
+  `nav_bar.h` (añadido el include) para que no puedan divergir.
+- `m7/src/launcher.c` — de una columna de botones de 36 px (3.9 mm, y 8 apps se
+  salían de la pantalla) a una rejilla de 2 columnas con tiles de 378×87 px
+  (**9.4 mm**), calculada desde la geometría.
+
+### Sigue pendiente
+
 - `m7/arduino_giga_r1_m7.overlay` — `displays = <&ltdc>`; el shield real se
   describe con el overlay `arduino_giga_display_shield` de Zephyr (ST7701 por DSI).
-- `tests/bench/sim_bench.c` — los hashes de referencia cambian con la resolución.
+  Cambiarlo a ciegas, sin poder compilar ni probar en placa, sería peor que
+  dejarlo documentado.
+- Compilar y validar el firmware en el hardware real.
+- Los hashes de píxeles del benchmark cambiaron con la resolución; ver
+  `docs/PERFORMANCE.md`.
 
 Las cifras de la tabla "Metricas del Sistema" del `README.md` (flash/RAM usados,
 número de tests) **no están verificadas**: no hay toolchain ARM ni workspace

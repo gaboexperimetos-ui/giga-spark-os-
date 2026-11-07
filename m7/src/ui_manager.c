@@ -7,6 +7,7 @@
  */
 
 #include "ui_manager.h"
+#include "nav_bar.h"   /* SCREEN_WIDTH / SCREEN_HEIGHT: geometria compartida */
 
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
@@ -23,12 +24,12 @@ K_THREAD_STACK_DEFINE(lvgl_stack, LVGL_STACK_SIZE);
 static struct k_thread lvgl_thread_data;
 
 /*
- * Display dimensions.
- * Virtual canvas only: the real Giga Display Shield is 480x800 native
- * (800x480 landscape). Migration pending; see docs/HARDWARE_FIDELITY.md.
+ * Display dimensions: landscape mode of the real Giga Display Shield
+ * (480x800 native, ST7701 over MIPI DSI). Kept in sync with nav_bar.h and
+ * simulator/main.c. See docs/HARDWARE_FIDELITY.md.
  */
-#define DISPLAY_WIDTH   480
-#define DISPLAY_HEIGHT  272
+#define DISPLAY_WIDTH   SCREEN_WIDTH
+#define DISPLAY_HEIGHT  SCREEN_HEIGHT
 
 /* LVGL display and input device references */
 static lv_display_t *display;

@@ -35,7 +35,7 @@ static void draw(int screen, uint32_t t)
 }
 int main(void)
 {
-	puts("screen,ns_per_frame,frames,hash_first,hash_last");
+	puts("screen,ns_per_frame,frames,hash_first,hash_last,pixels");
 	for (int screen = 0; screen < 7; ++screen) {
 		uint64_t best = UINT64_MAX;
 		uint32_t first = 0, last = 0;
@@ -52,8 +52,12 @@ int main(void)
 			uint64_t elapsed = now_ns() - start;
 			if (elapsed < best) best = elapsed;
 		}
-		printf("%d,%.3f,%u,%08x,%08x\n", screen,
-		       (double)best / FRAMES, FRAMES, first, last);
+		/* pixels permite comparar resoluciones distintas en ns/pixel:
+		 * un lienzo mayor hace mas trabajo por frame, no es un codigo
+		 * mas lento. */
+		printf("%d,%.3f,%u,%08x,%08x,%u\n", screen,
+		       (double)best / FRAMES, FRAMES, first, last,
+		       (unsigned)(SCR_W * SCR_H));
 	}
 	fprintf(stderr, "checksum=%u\n", sink);
 	return 0;
