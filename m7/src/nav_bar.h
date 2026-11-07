@@ -12,7 +12,11 @@
 #define NAV_BAR_HEIGHT   40
 #define NAV_BAR_Y_START  (272 - NAV_BAR_HEIGHT)  /* Bottom of 272px screen */
 
-/* Screen dimensions */
+/*
+ * Screen dimensions.
+ * Virtual canvas only: the real Giga Display Shield is 480x800 native
+ * (800x480 landscape). Migration pending; see docs/HARDWARE_FIDELITY.md.
+ */
 #define SCREEN_WIDTH     480
 #define SCREEN_HEIGHT    272
 

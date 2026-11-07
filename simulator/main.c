@@ -1,6 +1,13 @@
 /*
  * Gigaspark OS - Gemelo Digital v2
- * Resolucion exacta: 480x272 (Giga Display Shield ILI9341)
+ * Resolucion virtual actual: 480x272 (lienzo propio del simulador).
+ *
+ * OJO: esto NO es la resolucion del Giga Display Shield real. El shield
+ * (ASX00039) usa un panel KD040WVFID026 de 3.97" con 480x800 nativo,
+ * controlador ST7701 por MIPI DSI y tactil Goodix GT911. El ILI9341 que se
+ * citaba aqui es un panel de 320x240 y no corresponde a este hardware.
+ * La migracion a 800x480 esta pendiente; ver docs/HARDWARE_FIDELITY.md.
+ *
  * Cada app tiene su diseno profesional unico
  */
 
@@ -12,7 +19,7 @@
 #include <math.h>
 
 /* ============================================================
- * GIGA DISPLAY SHIELD - 480x272 EXACTO
+ * LIENZO DEL SIMULADOR - 480x272 (virtual, no el shield real)
  * ============================================================ */
 
 #define SCR_W  480

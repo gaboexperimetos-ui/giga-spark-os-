@@ -22,7 +22,11 @@ LOG_MODULE_REGISTER(ui_manager, CONFIG_LOG_DEFAULT_LEVEL);
 K_THREAD_STACK_DEFINE(lvgl_stack, LVGL_STACK_SIZE);
 static struct k_thread lvgl_thread_data;
 
-/* Display dimensions */
+/*
+ * Display dimensions.
+ * Virtual canvas only: the real Giga Display Shield is 480x800 native
+ * (800x480 landscape). Migration pending; see docs/HARDWARE_FIDELITY.md.
+ */
 #define DISPLAY_WIDTH   480
 #define DISPLAY_HEIGHT  272
 
@@ -37,8 +41,9 @@ static void display_flush_cb(lv_display_t *disp, const lv_area_t *area,
 			     uint8_t *color_p)
 {
 	/*
-	 * In a real implementation, this would call the STM32 LTDC
-	 * DMA2D driver to transfer pixels to the frame buffer.
+	 * In a real implementation, this would hand the pixels to the display
+	 * driver. Note the Giga Display Shield panel (ST7701) hangs off MIPI
+	 * DSI, not LTDC, so the flush path differs from a parallel-RGB panel.
 	 * For now, we just mark the flush as complete.
 	 */
 	lv_display_flush_ready(disp);
@@ -50,8 +55,10 @@ static void display_flush_cb(lv_display_t *disp, const lv_area_t *area,
 static void touchpad_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
 {
 	/*
-	 * In a real implementation, this would read from the FT6206
-	 * I2C touch controller via Zephyr's input subsystem.
+	 * In a real implementation, this would read from the Goodix GT911
+	 * I2C touch controller via Zephyr's input subsystem. The Giga Display
+	 * Shield uses a GT911 (up to 5 touch points), not an FT6206.
+	 * See docs/HARDWARE_FIDELITY.md.
 	 */
 	data->state = LV_INDEV_STATE_RELEASED;
 }

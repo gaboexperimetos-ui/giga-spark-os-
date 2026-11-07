@@ -33,20 +33,50 @@ Fuentes:
   objetivos son de 72–96 px (**7.8–10.4 mm**).
 - Regla milimétrica opcional y foto del hardware real como referencia.
 
-## Discrepancia detectada en el repositorio
+## Discrepancias detectadas en el repositorio
 
-El código actual usa **480×272** y lo atribuye a un panel **ILI9341**:
+El código usaba **480×272** y lo presentaba como el hardware real, atribuyéndolo
+además a un panel **ILI9341** (que en realidad es de 320×240 y no monta este
+shield). Al revisar salieron más afirmaciones incorrectas:
 
-- `simulator/main.c:3` — "Resolucion exacta: 480x272 (Giga Display Shield ILI9341)"
-- `simulator/main.c:18-19` — `SCR_W 480`, `SCR_H 272`
-- `m7/src/nav_bar.h:16-17` — `SCREEN_WIDTH 480`, `SCREEN_HEIGHT 272`
-- `m7/src/ui_manager.c:26-27` — `DISPLAY_WIDTH 480`, `DISPLAY_HEIGHT 272`
-- `docs/SIMULATOR.md:5,92` — describe 480x272 como el hardware real
+| Se afirmaba | Realidad verificada |
+|---|---|
+| Panel ILI9341, 480×272 | KD040WVFID026, 480×800, ST7701 |
+| Pantalla "física vía LTDC" | MIPI DSI (el ST7701 no cuelga de LTDC) |
+| Táctil "resistivo/capacitivo", FT6206 | Capacitivo Goodix GT911, 5 puntos |
+| "Memoria 512 KB RAM" | 1 MB RAM en el MCU + 8 MB SDRAM externa |
 
-Eso **no corresponde** al GIGA Display Shield: el ILI9341 es un panel de 320×240,
-y el shield real es 480×800 con ST7701 por DSI. Todavía no se cambió el firmware ni
-el simulador C, porque eso afecta layout, framebuffer, LVGL y benchmarks, y conviene
-decidirlo aparte. Esta vista previa ya muestra cómo se vería a resolución real.
+### Ya corregido (comentarios y documentación)
+
+Se corrigieron las afirmaciones falsas sin tocar constantes ni comportamiento:
+
+- `simulator/main.c` — cabecera y título de sección: 480×272 queda explícitamente
+  marcado como lienzo virtual, con la especificación real y por qué el ILI9341 no aplica.
+- `m7/src/launcher.c` — deja de llamar "LTDC display" al lienzo virtual.
+- `m7/src/nav_bar.h`, `m7/src/ui_manager.c` — dimensiones marcadas como virtuales.
+- `m7/src/ui_manager.c` — el comentario del touch ahora dice GT911 (no FT6206), y
+  el del flush aclara que el panel va por DSI, no por LTDC.
+- `docs/SIMULATOR.md` — aviso explícito de que 480×272 no es el shield real, y la
+  tabla de diferencias ahora usa resolución, bus, táctil y memoria correctos.
+
+Verificado tras esos cambios: tests host 3/3, ASAN+UBSAN 3/3 y smoke del
+simulador 1/1 en verde.
+
+### Pendiente (requiere decisión aparte)
+
+La **migración real a 800×480** no se hizo, porque cambia layout, framebuffer,
+LVGL y los hashes de píxeles de los benchmarks:
+
+- `simulator/main.c` — `SCR_W`/`SCR_H` y todo el layout dibujado a mano.
+- `m7/src/nav_bar.h` — `SCREEN_WIDTH`/`SCREEN_HEIGHT` y `NAV_BAR_Y_START`.
+- `m7/src/ui_manager.c` — `DISPLAY_WIDTH`/`DISPLAY_HEIGHT`.
+- `m7/arduino_giga_r1_m7.overlay` — `displays = <&ltdc>`; el shield real se
+  describe con el overlay `arduino_giga_display_shield` de Zephyr (ST7701 por DSI).
+- `tests/bench/sim_bench.c` — los hashes de referencia cambian con la resolución.
+
+Las cifras de la tabla "Metricas del Sistema" del `README.md` (flash/RAM usados,
+número de tests) **no están verificadas**: no hay toolchain ARM ni workspace
+Zephyr aquí, así que no se pudieron medir y se dejaron intactas.
 
 ## Alcance
 

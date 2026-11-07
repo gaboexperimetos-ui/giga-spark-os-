@@ -2,7 +2,9 @@
 
 ## Que es el Simulador
 
-El simulador permite ejecutar apps de Gigaspark OS en tu PC sin necesidad del hardware fisico. Usa SDL2 para crear una ventana que simula la pantalla 480x272 del Giga Display Shield, y el raton funciona como pantalla tactil.
+El simulador permite ejecutar apps de Gigaspark OS en tu PC sin necesidad del hardware fisico. Usa SDL2 para crear una ventana con un lienzo virtual de 480x272, y el raton funciona como pantalla tactil.
+
+> **Importante:** 480x272 es el lienzo actual del simulador, **no** la resolucion del Giga Display Shield real. El shield (ASX00039) lleva un panel de 3.97" con **480x800** nativo (800x480 en landscape), controlador **ST7701** por MIPI DSI y tactil **Goodix GT911**. La migracion del simulador y del firmware a esa resolucion esta pendiente. Detalles y fuentes en [HARDWARE_FIDELITY.md](HARDWARE_FIDELITY.md).
 
 ## Dependencias
 
@@ -89,7 +91,7 @@ simulator/
 
 ### Componentes
 
-1. **Framebuffer** (`sim_fb`): Array 480x272 de uint16_t (RGB565), igual que el hardware real.
+1. **Framebuffer** (`sim_fb`): Array 480x272 de uint16_t (RGB565). El formato RGB565 si coincide con el del panel real; la resolucion todavia no.
 2. **SDK API Table**: Tabla de funciones en `sdk_stubs.c` que implementa `fill_rect`, `draw_text`, `get_touch`, etc. usando SDL2.
 3. **Launcher**: Menu interactivo que muestra la lista de apps del sistema.
 4. **Touch**: El raton de la PC simula el touchscreen (click = toque).
@@ -98,10 +100,10 @@ simulator/
 
 | Caracteristica | Hardware (STM32) | Simulador (PC) |
 |---------------|------------------|----------------|
-| Pantalla | Fisica via LTDC | Ventana SDL2 |
-| Touch | Resistivo/Capacitivo | Raton |
+| Pantalla | 480x800 nativo, ST7701 via MIPI DSI | Ventana SDL2 480x272 |
+| Touch | Capacitivo Goodix GT911, 5 puntos | Raton (1 punto) |
 | CPU | Cortex-M7 480MHz | x86/ARM PC |
-| Memoria | 512KB RAM | Ilimitada |
+| Memoria | 1 MB RAM + 8 MB SDRAM externa | Ilimitada |
 | M4 Core | Fisico | No simulado |
 | IPC | OpenAMP real | Stubs |
 | Audio | I2S + DMA | No simulado |

@@ -3,7 +3,11 @@
  * Application launcher menu for LVGL v9 display
  *
  * Requests the app list from M4 via IPC and creates a visual
- * button menu on the 480x272 LTDC display.
+ * button menu on the 480x272 virtual display.
+ *
+ * NOTE: 480x272 is the current virtual canvas, not the real Giga Display
+ * Shield. That panel is 480x800 native (ST7701 over MIPI DSI, not LTDC).
+ * Migration pending; see docs/HARDWARE_FIDELITY.md.
  */
 
 #include "launcher.h"
