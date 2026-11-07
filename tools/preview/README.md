@@ -6,13 +6,44 @@ su `main`, y llama a `render_screen()` y `handle_event()` directamente.
 
 ## Arrancar
 
+Si ya hay SDL2 y CMake disponibles:
+
 ```bash
 bash tools/preview/build.sh          # compila build_preview/bridge + smoke test
 python3 tools/preview/server.py --port 8080
 ```
 
+Si el entorno perdió las dependencias (típico tras un snapshot), un solo comando
+las reconstruye y compila el puente:
+
+```bash
+bash tools/preview/bootstrap.sh      # CMake + Ninja + SDL2 + puente
+python3 tools/preview/server.py --port 8080
+```
+
+`bootstrap.sh` es idempotente: reutiliza lo que ya exista. Verificado en frío
+(sin nada cacheado y sin `cmake`/`ninja` en PATH) en **~59 s**, y el binario
+resultante sirve fotogramas, navegación y animación correctamente.
+
 Abrir el puerto 8080 en la vista previa. El servidor escucha en `0.0.0.0` y usa
 rutas relativas, así que funciona detrás del proxy de la plataforma.
+
+### Variables de entorno
+
+| Variable | Efecto |
+|---|---|
+| `SDL2_PREFIX` | Prefijo de SDL2 a usar; tiene prioridad sobre pkg-config y PATH |
+| `GIGA_BUILD_DIR` | Directorio de salida del puente (por defecto `build_preview/`) |
+| `GIGA_DEPS_PREFIX` | Dónde vive/construir SDL2 (por defecto `~/.cache/giga-deps`) |
+| `GIGA_TOOLS_PREFIX` | Dónde instalar CMake/Ninja (por defecto `~/.cache/giga-tools`) |
+
+Las dos últimas permiten probar el bootstrap en un prefijo aislado sin pisar el
+binario del preview en ejecución:
+
+```bash
+GIGA_DEPS_PREFIX=/tmp/cold/deps GIGA_TOOLS_PREFIX=/tmp/cold/tools \
+  GIGA_BUILD_DIR=/tmp/cold/build bash tools/preview/bootstrap.sh
+```
 
 ## Comprobar que está vivo
 

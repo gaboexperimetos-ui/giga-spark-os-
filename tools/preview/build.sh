@@ -5,14 +5,27 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
-OUT="$ROOT/build_preview"
+# GIGA_BUILD_DIR permite construir en un directorio aislado (pruebas del
+# bootstrap) sin pisar el binario que usa el preview en ejecución.
+OUT="${GIGA_BUILD_DIR:-$ROOT/build_preview}"
 mkdir -p "$OUT"
 
 CFLAGS_EXTRA=(-std=c11 -O2 -D_POSIX_C_SOURCE=200809L -Wall -Wextra)
 
 # main.c incluye <SDL2/SDL.h>, así que necesita el padre de includedir,
 # no solo el -I.../include/SDL2 que devuelve sdl2-config.
-if command -v pkg-config >/dev/null 2>&1 && pkg-config --exists sdl2; then
+# SDL2_PREFIX tiene prioridad: lo usa bootstrap.sh para prefijos aislados.
+if [ -n "${SDL2_PREFIX:-}" ]; then
+  CFG="$SDL2_PREFIX/bin/sdl2-config"
+  if [ ! -x "$CFG" ]; then
+    echo "ERROR: SDL2_PREFIX=$SDL2_PREFIX no contiene bin/sdl2-config" >&2
+    exit 1
+  fi
+  SDL_CFLAGS="$("$CFG" --cflags)"
+  SDL_LIBS="$("$CFG" --static-libs)"
+  INC_PARENT="$("$CFG" --prefix)/include"
+  echo "SDL2 via SDL2_PREFIX ($SDL2_PREFIX)"
+elif command -v pkg-config >/dev/null 2>&1 && pkg-config --exists sdl2; then
   SDL_CFLAGS="$(pkg-config --cflags sdl2)"
   SDL_LIBS="$(pkg-config --libs sdl2)"
   INC_PARENT="$(pkg-config --variable=includedir sdl2)"
