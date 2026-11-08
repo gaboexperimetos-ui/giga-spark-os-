@@ -173,18 +173,61 @@ class Bridge:
 class Handler(BaseHTTPRequestHandler):
     bridge: Bridge
 
+    # HTTP/1.1 + keep-alive. BaseHTTPRequestHandler usa 1.0 por defecto, que
+    # cierra la conexion en cada peticion; algunos proxies del preview no lo
+    # manejan bien. Con 1.1 toda respuesta DEBE llevar Content-Length exacto
+    # (lo hace _send) o el cliente se queda esperando.
+    protocol_version = "HTTP/1.1"
+
     def log_message(self, fmt, *args):
         pass
 
-    def _send(self, code, ctype, body, extra=None):
+    def _send(self, code, ctype, body, extra=None, head=False):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        # El preview va dentro de un iframe. Sin Expose-Headers, un contexto
+        # de otro origen no puede leer X-Giga-* y el brillo/pantalla saldrian
+        # como los valores por defecto.
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Expose-Headers",
+                         "X-Giga-Screen, X-Giga-Battery, X-Giga-Backlight")
         for k, v in (extra or {}).items():
             self.send_header(k, str(v))
         self.end_headers()
-        self.wfile.write(body)
+        # HEAD devuelve las cabeceras de GET pero NUNCA cuerpo (RFC 9110).
+        if not head:
+            self.wfile.write(body)
+
+    def do_HEAD(self):
+        """Los proxies suelen sondar con HEAD para saber si el servidor vive.
+
+        Sin este metodo BaseHTTPRequestHandler respondia 501 y el preview
+        podia marcarse como caido aunque GET / funcionara perfectamente.
+        No se toca el puente: sondar no debe avanzar la simulacion.
+        """
+        if self.path == "/" or self.path.startswith("/index.html"):
+            self._send(200, "text/html; charset=utf-8", HTML.encode(), head=True)
+        elif self.path.startswith("/frame.raw"):
+            self._send(200, "application/octet-stream", b"\0" * FRAME_BYTES,
+                       head=True)
+        elif self.path == "/health":
+            self._send(200, "text/plain", b"ok", head=True)
+        else:
+            self._send(404, "text/plain", b"not found", head=True)
+
+    def do_OPTIONS(self):
+        # Preflight CORS: el preview se sirve dentro de un iframe de otro
+        # origen. Sin esto respondiamos 501 y el navegador bloqueaba el POST
+        # de /input (los toques no llegaban).
+        self.send_response(204)
+        self.send_header("Allow", "GET, HEAD, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, HEAD, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def _frame(self, line):
         try:

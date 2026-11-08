@@ -205,17 +205,32 @@ jobs:
           cmake --build build_host_san --parallel 2
           ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 \
             ctest --test-dir build_host_san --output-on-failure
-      - name: Preview color fidelity and font coverage
-        run: |
-          set -euo pipefail
-          # RGB565: la expansion a 24 bits debe ser biyectiva o el preview
-          # muestra un color distinto al del panel. Cobertura de fuente: un
-          # glifo ausente se dibuja como '?' silenciosamente.
-          python -m unittest discover -s tests/preview -v
+      # El puente va PRIMERO: test_http_contract arranca el servidor real y se
+      # salta si build_preview/bridge no existe. Con el orden anterior esos
+      # tests se omitian en silencio y el 501 de HEAD habria pasado CI.
       - name: Preview bridge smoke test
         run: |
           set -euo pipefail
           bash tools/preview/build.sh
+      - name: Preview color fidelity, font coverage and HTTP contract
+        run: |
+          set -euo pipefail
+          # RGB565: la expansion a 24 bits debe ser biyectiva o el preview
+          # muestra un color distinto al del panel. Cobertura de fuente: un
+          # glifo ausente se dibuja como '?' silenciosamente. Contrato HTTP:
+          # HEAD/OPTIONS en 501 hacian que el proxy marcara el preview caido.
+          python -m unittest discover -s tests/preview -v
+          # Fallar si algo se salto: un skip aqui significa que el puente no
+          # estaba y la mitad de la suite no se ejecuto.
+          python - <<'PY'
+          import subprocess, sys, unittest, pathlib
+          sys.path.insert(0, str(pathlib.Path('tests/preview').resolve()))
+          suite = unittest.defaultTestLoader.discover('tests/preview')
+          res = unittest.TextTestRunner(verbosity=0).run(suite)
+          if res.skipped:
+              sys.exit(f"{len(res.skipped)} tests se saltaron: {res.skipped}")
+          sys.exit(0 if res.wasSuccessful() else 1)
+          PY
 
   # El simulador soporta SDL3 (actual) y SDL2 (paquete del sistema en LTS).
   # Sin este job la ruta de respaldo se podria romper sin que nadie lo note.
