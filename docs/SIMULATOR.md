@@ -6,6 +6,26 @@ El simulador permite ejecutar apps de Gigaspark OS en tu PC sin necesidad del ha
 
 > **Geometria:** el lienzo es **800x480**, el modo landscape del Giga Display Shield real (ASX00039): panel de 3.97" con **480x800** nativo, controlador **ST7701** por MIPI DSI y tactil **Goodix GT911**. Antes era 480x272, una resolucion que no corresponde a ningun panel de este shield; ya esta migrada. Fuentes y calculos en [HARDWARE_FIDELITY.md](HARDWARE_FIDELITY.md).
 
+### Aspecto Material Design 3
+
+La interfaz imita Android, no una terminal: **Roboto con antialiasing** (atlas de
+cobertura de 4 bits en `simulator/roboto_font.h`), superficies tonales elevadas,
+switches de pastilla, chips, slider y **barra de navegacion de 3 botones**
+(atras / inicio / recientes) abajo, con barra de estado arriba y app bar.
+
+La capa de dibujo esta en `simulator/ui_material.c`: mezcla con alfa en RGB565,
+rectangulos redondeados y circulos antialiasados, iconos de trazo grueso y
+widgets M3. Roboto es de Google, licencia SIL OFL 1.1
+(`simulator/fonts/OFL-Roboto.txt`); el atlas se regenera con
+`tools/ui/gen_font.py`.
+
+**El brillo es retroiluminacion, no contenido.** En el panel real el brillo es el
+PWM de la retroiluminacion: escala la luz emitida, no los valores RGB565.
+Atenuar dentro del framebuffer obligaba a recuantizar tonos ya oscuros y el gris
+viraba a verde (una tarjeta pasaba de (33,36,41) a (24,32,33), con verde==azul).
+Ahora `render_screen()` deja el framebuffer intacto a cualquier brillo y
+`backlight_scale()` entrega el factor para aplicarlo con 8 bits por canal.
+
 ### Diseno tactil
 
 El panel mide 86.47 x 51.88 mm utiles, o sea **0.1081 mm/pixel**. Eso convierte el

@@ -82,19 +82,54 @@ Medición real contra `6e5c1456`, GCC 12.2 `-O3 -DNDEBUG`, mediana de 5 ejecucio
 
 | Pantalla | Antes ns/frame | Ahora ns/frame | ns/píxel antes | ns/píxel ahora | Coste por píxel |
 |---|---:|---:|---:|---:|---:|
-| 0 Launcher | 19260 | 72595 | 0.1475 | 0.1890 | 1.28× |
-| 1 Osciloscopio | 27433 | 83824 | 0.2101 | 0.2183 | 1.04× |
-| 2 Fuente | 28839 | 68435 | 0.2209 | 0.1782 | **0.81×** |
-| 3 Flipper RF | 25493 | 67978 | 0.1953 | 0.1770 | **0.91×** |
-| 4 WiFi | 20912 | 63640 | 0.1602 | 0.1657 | 1.04× |
-| 5 Ajustes | 17179 | 68475 | 0.1316 | 0.1783 | 1.36× |
-| 6 Acerca de | 26043 | 60611 | 0.1995 | 0.1578 | **0.79×** |
+| 0 Launcher | 17979 | 158260 | 0.1377 | 0.4121 | 2.99× |
+| 1 Osciloscopio | 26917 | 137294 | 0.2062 | 0.3575 | 1.73× |
+| 2 Fuente | 26444 | 126592 | 0.2025 | 0.3297 | 1.63× |
+| 3 Flipper RF | 23396 | 135629 | 0.1792 | 0.3532 | 1.97× |
+| 4 WiFi | 19769 | 167494 | 0.1514 | 0.4362 | 2.88× |
+| 5 Ajustes | 15996 | 151745 | 0.1225 | 0.3952 | 3.23× |
+| 6 Acerca de | 23674 | 142425 | 0.1813 | 0.3709 | 2.05× |
 
-Lectura honesta: por frame todo es ~2.3–4× más lento porque hay 2.94× más píxeles.
-Por píxel, **3 de 7 pantallas son más baratas** que antes y el resto sube entre un
-4 % y un 36 % (tarjetas redondeadas, iconos y más texto). A 30 FPS el peor caso es
-83.8 µs por frame, un **0.25 %** del presupuesto de 33 ms: el coste es irrelevante
-para la fluidez y compraba objetivos táctiles de 8.6–10.4 mm en vez de 3.9 mm.
+Lectura honesta: **el dibujo es más caro a propósito.** La interfaz pasó a
+Material Design 3 — texto Roboto con antialiasing (mezcla alfa por píxel),
+superficies tonales redondeadas, iconos de trazo — sobre una fuente bitmap 5×7
+sin antialiasing. Parte del salto por frame son los 2.94× píxeles; ns/píxel ya
+descuenta el tamaño, así que ese **1.6–3.2×** es el coste real del antialiasing y
+los componentes. Es una regresión de rendimiento deliberada a cambio de una
+interfaz que parece Android en vez de una terminal.
+
+En absoluto sigue sobrado: el peor frame es **167 µs** (WiFi), un **0.5 %** del
+presupuesto de 33 ms a 30 FPS. Para una pantalla que mira una persona, no un
+bucle de datos, es la decisión correcta.
+
+Sí se optimizó lo que el perfil señaló como cuello real, no lo que se suponía:
+`m_ring_rect` recorriendo solo el perímetro salió **neutro** (0.96–1.05×, ruido).
+Lo que sí costaba era la traza del osciloscopio: llamaba `m_line()` una vez por
+columna y por canal, ~1500 llamadas por frame a 3.9 µs, cada una estampando
+discos con `sqrtf`. Una curva muestreada por columna solo necesita un span
+vertical entre muestras: **463 → 129 µs por frame, 3.6×**, y dibuja mejor las
+transiciones verticales de la onda cuadrada.
+
+### Hashes del framebuffer (baseline visual Material)
+
+| Pantalla | Hash previo (480×272) | Hash Material (800×480) |
+|---|---|---|
+| 0 | `32348a1d` | `7b5a33b5` |
+| 1 | `de6a4d72` | `84114911` |
+| 2 | `f9760627` | `ae0af51a` |
+| 3 | `c7676811` | `1e9b1290` |
+| 4 | `083fde0c` | `3cf8780b` |
+| 5 | `c180a63d` | `7d8bbd61` |
+| 6 | `1d3962ed` | `e379454d` |
+
+### Trampa de verificación que produjo falsos positivos
+
+`cmake --build dirA dirB` **no es válido**: CMake responde `Unknown argument dirB`
+y sale con código 1. Filtrando la salida con `grep -E 'error|warning'` ese mensaje
+no contiene ninguna de las dos palabras, así que el comando parece limpio y el
+`ctest` siguiente corre el **binario anterior**. Varias tandas de esta sesión
+dieron verde sobre código sin compilar. Construir un directorio por invocación y
+comprobar el código de salida (`set -e`), no la ausencia de la palabra "error".
 
 Los kernels de memoria no cambiaron en esta pasada; la variación respecto a la
 tabla anterior (p. ej. buddy 3.13× vs 2.57×) es ruido de máquina entre sesiones, no

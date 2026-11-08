@@ -61,7 +61,7 @@
 │ Thread 2: app_runner │ Thread 2: mem_engine          │
 │   (Prio 5, Apps)    │   (Prio 7, Memoria+FS)       │
 ├─────────────────────┼───────────────────────────────┤
-│ • LVGL GUI (9.5)    │ • 3-tier Memory Engine        │
+│ • LVGL GUI (9.x)    │ • 3-tier Memory Engine        │
 │ • Fault Recovery     │ • zRAM Compression (RLE)      │
 │ • Power Manager      │ • SD Swap (64 sectors)        │
 │ • Nav Bar (40px)     │ • FAT32 File System           │
@@ -237,7 +237,7 @@ El diseño del PCB esta en `hardware/Gigaspark_Mega/`. Ver [HARDWARE.md](HARDWAR
 | RAM M7 | 125 KB / 512 KB (24%) |
 | Flash M4 | 61 KB |
 | RAM M4 | 40 KB (31%) |
-| Tests | 18/18 passing |
+| Tests | 4 suites de host + smoke + 9 de preview (ver `docs/VERSIONS.md`) |
 | Commits | 23 |
 | Phases | 22 completadas |
 
@@ -245,9 +245,11 @@ El diseño del PCB esta en `hardware/Gigaspark_Mega/`. Ver [HARDWARE.md](HARDWAR
 
 ## Tecnologias
 
-- **RTOS:** Zephyr 4.4.1
+- **RTOS:** Zephyr 4.5.0 (fijado en `west.yml`)
+- **Simulador:** SDL3 3.4.20, con respaldo en SDL2 2.32.10
+- **Versiones y su verificación:** [`docs/VERSIONS.md`](docs/VERSIONS.md)
 - **MCU:** STM32H747XI (Cortex-M7 480MHz + M4 240MHz)
-- **GUI:** LVGL 9.5.0
+- **GUI:** LVGL — la revisión que arrastra el manifiesto de Zephyr 4.5.0
 - **IPC:** OpenAMP/RPMsg
 - **Simulador:** SDL2 nativo (sin dependencias Zephyr)
 - **Hardware Design:** KiCad 10.0.6

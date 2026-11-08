@@ -39,7 +39,9 @@ class Bridge:
     def send(self, cmd: str):
         self.p.stdin.write((cmd + "\n").encode())
         self.p.stdin.flush()
-        screen, bat = struct.unpack("<II", self._read(8))
+        screen, bat, bl = struct.unpack("<III", self._read(12))
+        # bl = retroiluminacion. El PNG se guarda a brillo nominal: para
+        # revisar layout y color no conviene atenuar la imagen.
         return screen, bat, self._read(W * H * 2)
 
     def close(self):
@@ -59,7 +61,8 @@ def to_png(raw: bytes, path: Path):
         for x in range(W):
             c = raw[base + x * 2] | (raw[base + x * 2 + 1] << 8)
             r, g, b = (c >> 11) & 31, (c >> 5) & 63, c & 31
-            rows += bytes(((r << 3) | (r >> 2), (g << 2) | (g >> 2), (b << 3) | (b >> 2)))
+            # 6->8 bits: (g >> 4), no (g >> 2). Debe coincidir con server.py.
+            rows += bytes(((r << 3) | (r >> 2), (g << 2) | (g >> 4), (b << 3) | (b >> 2)))
 
     def chunk(tag: bytes, data: bytes) -> bytes:
         return (struct.pack(">I", len(data)) + tag + data

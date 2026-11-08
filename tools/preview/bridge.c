@@ -1,10 +1,10 @@
 /* Puente local de vista previa: renderiza el simulador C real y expone
  * fotogramas RGB565 por stdout. No forma parte del firmware.
  *
- * Importa el reloj: handle_event() fija plazos con SDL_GetTicks() (resaltado
+ * Importa el reloj: handle_event() fija plazos con gsp_ticks() (resaltado
  * de pulsacion, fin del escaneo WiFi). Si el puente midiera el tiempo con
  * otro reloj, esos plazos nunca expirarian y el boton pulsado quedaria
- * resaltado para siempre. Por eso aqui se usa SDL_GetTicks() tambien.
+ * resaltado para siempre. Por eso aqui se usa gsp_ticks() tambien.
  */
 #define SDL_MAIN_HANDLED
 #define main gigaspark_simulator_main
@@ -24,11 +24,11 @@ int main(void) {
 
 	SDL_SetMainReady();
 	/* Solo el temporizador: render_screen() escribe en fb, no abre ventana. */
-	if (SDL_Init(SDL_INIT_TIMER) < 0) {
+	if (!gsp_init(GSP_INIT_TIMER)) {
 		fprintf(stderr, "SDL_Init(timer): %s\n", SDL_GetError());
 		return 1;
 	}
-	uint32_t start = SDL_GetTicks();
+	uint32_t start = gsp_ticks();
 	uint32_t last_battery = start;
 	char line[128];
 
@@ -39,8 +39,8 @@ int main(void) {
 		} else if (line[0] == 'K') {
 			SDL_Event ev;
 			memset(&ev, 0, sizeof(ev));
-			ev.type = SDL_KEYDOWN;
-			ev.key.keysym.sym = (SDL_Keycode)strtol(line + 1, NULL, 10);
+			ev.type = GSP_EV_KEYDOWN;
+			gsp_set_event_key(&ev, (SDL_Keycode)strtol(line + 1, NULL, 10));
 			handle_event(&ev, &screen, &run);
 			if (!run) { run = true; screen = 0; }
 		} else if (line[0] == 'M') {
@@ -48,7 +48,7 @@ int main(void) {
 			if (sscanf(line + 1, "%d %d", &x, &y) == 2) {
 				SDL_Event ev;
 				memset(&ev, 0, sizeof(ev));
-				ev.type = SDL_MOUSEBUTTONDOWN;
+				ev.type = GSP_EV_MOUSEDOWN;
 				ev.button.button = SDL_BUTTON_LEFT;
 				ev.button.x = x * SCALE;
 				ev.button.y = y * SCALE;
@@ -56,7 +56,7 @@ int main(void) {
 			}
 		}
 
-		uint32_t now = SDL_GetTicks();
+		uint32_t now = gsp_ticks();
 		/* Expiracion de estados temporales, igual que el bucle SDL real. */
 		if (press_live && (int32_t)(now - press_until) >= 0) press_live = false;
 		if (wf_scan_until && (int32_t)(now - wf_scan_until) >= 0) wf_scan_until = 0;
@@ -65,7 +65,9 @@ int main(void) {
 			last_battery = now;
 		}
 		render_screen(screen, now - start, bat);
-		uint32_t header[2] = { (uint32_t)screen, (uint32_t)bat };
+		/* screen, bateria, retroiluminacion (0..255). */
+		uint32_t header[3] = { (uint32_t)screen, (uint32_t)bat,
+		                       (uint32_t)backlight_scale() };
 		fwrite(header, sizeof(header), 1, stdout);
 		fwrite(fb, sizeof(fb), 1, stdout);
 		fflush(stdout);

@@ -1,22 +1,26 @@
 /*
- * Gigaspark OS - Simulador tactil
+ * Gigaspark OS - Simulador tactil con interfaz Material Design 3
  *
  * Resolucion: 800x480 landscape, la del Arduino GIGA Display Shield real
  * (panel KD040WVFID026 de 3.97", 480x800 nativo, ST7701 por MIPI DSI,
- * tactil Goodix GT911). Antes usaba 480x272 atribuido a un ILI9341, que no
- * corresponde a este hardware. Ver docs/HARDWARE_FIDELITY.md.
+ * tactil Goodix GT911). Ver docs/HARDWARE_FIDELITY.md.
  *
- * Diseno tactil: a 0.1081 mm/pixel, un objetivo de 80 px mide 8.6 mm.
- * Ningun boton baja de 80 px de lado menor.
+ * Aspecto Android: tipografia Roboto con antialiasing, superficies tonales
+ * elevadas, switches de pastilla, chips y barra de navegacion de 3 botones.
+ * La capa de dibujo vive en ui_material.c + roboto_font.h.
  *
- * Cada boton se dibuja y registra su zona tactil en la misma llamada, asi
- * que lo que se ve es exactamente lo que responde al dedo.
+ * Diseno tactil: a 0.1081 mm/pixel un objetivo de 80 px mide 8.6 mm. Ningun
+ * boton baja de 80 px de lado menor, y un test lo verifica en las 7 pantallas.
+ *
+ * Cada boton se dibuja y registra su zona tactil en la misma llamada, asi que
+ * lo que se ve es exactamente lo que responde al dedo.
  */
 
-#include <SDL2/SDL.h>
+#include "sdl_compat.h"
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 #include <math.h>
 
@@ -28,261 +32,37 @@
 #define FPS    30
 #define FRAME  (1000 / FPS)
 
-/* Cromo comun */
-#define BAR_H   56
-#define RAIL_W  96
-#define CX      RAIL_W
-#define CY      BAR_H
-#define CW      (SCR_W - RAIL_W)
-#define CH      (SCR_H - BAR_H)
-#define PAD     16
-#define GAP     12
+/* Cromo Android: estado arriba, app bar, contenido y navegacion abajo. */
+#define STATUS_H 36
+#define APPBAR_H 80
+#define NAV_H    80
+#define CX       0
+#define CY       (STATUS_H + APPBAR_H)
+#define CW       SCR_W
+#define CH       (SCR_H - CY - NAV_H)
+#define NAV_Y    (SCR_H - NAV_H)
+#define PAD      16
+#define GAP      12
 #define TOUCH_MIN 80
 
-/* Paleta RGB565 (el formato real del panel) */
-#define BLK  0x0000
-#define WHT  0xFFFF
-#define BG   0x0864
-#define PANEL 0x10A5
-#define CRD  0x1927
-#define CRD2 0x21AA
-#define BDR  0x29A9
-#define ACC  0x2EFF
-#define ACCD 0x0BB2
-#define MUT  0x9D77
-#define LGR  0xC677
-#define GRY  0x7BEF
-#define GRN  0x3E73
-#define GRND 0x0BEF
-#define RED  0xFB0E
-#define REDD 0x8106
-#define YEL  0xFDE4
-#define ORG  0xFD20
-#define PRP  0x9A7F
-#define CYN  0x2EFF
-#define BLU  0x2A5F
+_Static_assert(CH >= 280, "el contenido no puede alojar 3 filas tactiles");
+_Static_assert(NAV_H >= TOUCH_MIN, "la barra de navegacion debe ser alcanzable");
 
 static uint16_t fb[SCR_W * SCR_H];
 
-static void px(int x, int y, uint16_t c) {
-	if (x >= 0 && x < SCR_W && y >= 0 && y < SCR_H)
-		fb[y * SCR_W + x] = c;
-}
-
 static void frect(int x, int y, int w, int h, uint16_t c) {
 	int x0 = x < 0 ? 0 : x, y0 = y < 0 ? 0 : y;
-	int x1 = x + w > SCR_W ? SCR_W : x + w;
-	int y1 = y + h > SCR_H ? SCR_H : y + h;
+	int x1 = x + w, y1 = y + h;
+	if (x1 > SCR_W) x1 = SCR_W;
+	if (y1 > SCR_H) y1 = SCR_H;
 	for (int j = y0; j < y1; j++) {
-		uint16_t *row = fb + (size_t)j * SCR_W;
+		uint16_t *row = fb + j * SCR_W;
 		for (int i = x0; i < x1; i++) row[i] = c;
 	}
 }
 
-static void drect(int x, int y, int w, int h, uint16_t c) {
-	frect(x, y, w, 1, c);
-	frect(x, y + h - 1, w, 1, c);
-	frect(x, y, 1, h, c);
-	frect(x + w - 1, y, 1, h, c);
-}
-
-/* Rectangulo redondeado por scanline, sin aliasing costoso. */
-static void rrect(int x, int y, int w, int h, int r, uint16_t c) {
-	if (w <= 0 || h <= 0) return;
-	if (r * 2 > w) r = w / 2;
-	if (r * 2 > h) r = h / 2;
-	for (int j = 0; j < h; j++) {
-		int dy = 0;
-		if (j < r) dy = r - j;
-		else if (j >= h - r) dy = j - (h - r) + 1;
-		int inset = 0;
-		if (dy > 0) {
-			int dd = r * r - dy * dy;
-			inset = dd <= 0 ? r : r - (int)(sqrtf((float)dd) + 0.5f);
-		}
-		frect(x + inset, y + j, w - 2 * inset, 1, c);
-	}
-}
-
-static void card(int x, int y, int w, int h, int r, uint16_t fill, uint16_t border) {
-	rrect(x, y, w, h, r, border);
-	rrect(x + 2, y + 2, w - 4, h - 4, r > 2 ? r - 2 : 0, fill);
-}
-
 /* ============================================================
- * FUENTE 8x16
- * ============================================================ */
-
-static const uint8_t FNT[][16] = {
-	{0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x18,0x3C,0x3C,0x3C,0x18,0x18,0x18,0x00,0x18,0x18,0x00,0x00,0x00,0x00},
-	{0x00,0x66,0x66,0x66,0x24,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x6C,0x6C,0xFE,0x6C,0x6C,0x6C,0xFE,0x6C,0x6C,0x00,0x00,0x00,0x00},
-	{0x18,0x18,0x7C,0xC6,0xC2,0xC0,0x7C,0x06,0x06,0x86,0xC6,0x7C,0x18,0x18,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0xC2,0xC6,0x0C,0x18,0x30,0x60,0xC6,0x86,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x38,0x6C,0x6C,0x38,0x76,0xDC,0xCC,0xCC,0xCC,0x76,0x00,0x00,0x00,0x00},
-	{0x00,0x30,0x30,0x30,0x60,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x0C,0x18,0x30,0x30,0x30,0x30,0x30,0x30,0x18,0x0C,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x30,0x18,0x0C,0x0C,0x0C,0x0C,0x0C,0x0C,0x18,0x30,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0x00,0x66,0x3C,0xFF,0x3C,0x66,0x00,0x00,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0x00,0x18,0x18,0x7E,0x18,0x18,0x00,0x00,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x18,0x18,0x18,0x30,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0x00,0x00,0x00,0xFE,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x18,0x18,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0x02,0x06,0x0C,0x18,0x30,0x60,0xC0,0x80,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x7C,0xC6,0xC6,0xCE,0xDE,0xF6,0xE6,0xC6,0xC6,0x7C,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x18,0x38,0x78,0x18,0x18,0x18,0x18,0x18,0x18,0x7E,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x7C,0xC6,0x06,0x0C,0x18,0x30,0x60,0xC0,0xC6,0xFE,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x7C,0xC6,0x06,0x06,0x3C,0x06,0x06,0x06,0xC6,0x7C,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x0C,0x1C,0x3C,0x6C,0xCC,0xFE,0x0C,0x0C,0x0C,0x1E,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0xFE,0xC0,0xC0,0xC0,0xFC,0x06,0x06,0x06,0xC6,0x7C,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x38,0x60,0xC0,0xC0,0xFC,0xC6,0xC6,0xC6,0xC6,0x7C,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0xFE,0xC6,0x06,0x06,0x0C,0x18,0x30,0x30,0x30,0x30,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x7C,0xC6,0xC6,0xC6,0x7C,0xC6,0xC6,0xC6,0xC6,0x7C,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x7C,0xC6,0xC6,0xC6,0x7E,0x06,0x06,0x06,0x0C,0x78,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0x18,0x18,0x00,0x00,0x00,0x18,0x18,0x00,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0x18,0x18,0x00,0x00,0x00,0x18,0x18,0x30,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x06,0x0C,0x18,0x30,0x60,0x30,0x18,0x0C,0x06,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0x00,0x7E,0x00,0x00,0x7E,0x00,0x00,0x00,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x60,0x30,0x18,0x0C,0x06,0x0C,0x18,0x30,0x60,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x7C,0xC6,0xC6,0x0C,0x18,0x18,0x18,0x00,0x18,0x18,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x7C,0xC6,0xC6,0xDE,0xDE,0xDE,0xDC,0xC0,0x7C,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x10,0x38,0x6C,0xC6,0xC6,0xFE,0xC6,0xC6,0xC6,0xC6,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0xFC,0x66,0x66,0x66,0x7C,0x66,0x66,0x66,0x66,0xFC,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x3C,0x66,0xC2,0xC0,0xC0,0xC0,0xC0,0xC2,0x66,0x3C,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0xF8,0x6C,0x66,0x66,0x66,0x66,0x66,0x66,0x6C,0xF8,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0xFE,0x66,0x62,0x68,0x78,0x68,0x60,0x62,0x66,0xFE,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0xFE,0x66,0x62,0x68,0x78,0x68,0x60,0x60,0x60,0xF0,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x3C,0x66,0xC2,0xC0,0xC0,0xDE,0xC6,0xC6,0x66,0x3A,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0xC6,0xC6,0xC6,0xC6,0xFE,0xC6,0xC6,0xC6,0xC6,0xC6,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x3C,0x18,0x18,0x18,0x18,0x18,0x18,0x18,0x18,0x3C,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x1E,0x0C,0x0C,0x0C,0x0C,0x0C,0xCC,0xCC,0xCC,0x78,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0xE6,0x66,0x66,0x6C,0x78,0x78,0x6C,0x66,0x66,0xE6,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0xF0,0x60,0x60,0x60,0x60,0x60,0x60,0x62,0x66,0xFE,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0xC6,0xEE,0xFE,0xFE,0xD6,0xC6,0xC6,0xC6,0xC6,0xC6,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0xC6,0xE6,0xF6,0xFE,0xDE,0xCE,0xC6,0xC6,0xC6,0xC6,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x7C,0xC6,0xC6,0xC6,0xC6,0xC6,0xC6,0xC6,0xC6,0x7C,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0xFC,0x66,0x66,0x66,0x7C,0x60,0x60,0x60,0x60,0xF0,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x7C,0xC6,0xC6,0xC6,0xC6,0xC6,0xC6,0xD6,0xDE,0x7C,0x0C,0x0E,0x00,0x00},
-	{0x00,0x00,0xFC,0x66,0x66,0x66,0x7C,0x6C,0x66,0x66,0x66,0xE6,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x7C,0xC6,0xC6,0x60,0x38,0x0C,0x06,0xC6,0xC6,0x7C,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x7E,0x7E,0x5A,0x18,0x18,0x18,0x18,0x18,0x18,0x3C,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0xC6,0xC6,0xC6,0xC6,0xC6,0xC6,0xC6,0xC6,0xC6,0x7C,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0xC6,0xC6,0xC6,0xC6,0xC6,0xC6,0xC6,0x6C,0x38,0x10,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0xC6,0xC6,0xC6,0xC6,0xD6,0xD6,0xD6,0xFE,0xEE,0x6C,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0xC6,0xC6,0x6C,0x7C,0x38,0x38,0x7C,0x6C,0xC6,0xC6,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x66,0x66,0x66,0x66,0x3C,0x18,0x18,0x18,0x18,0x3C,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0xFE,0xC6,0x86,0x0C,0x18,0x30,0x60,0xC2,0xC6,0xFE,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x3C,0x30,0x30,0x30,0x30,0x30,0x30,0x30,0x30,0x3C,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x80,0xC0,0x60,0x30,0x18,0x0C,0x06,0x02,0x00,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x3C,0x0C,0x0C,0x0C,0x0C,0x0C,0x0C,0x0C,0x0C,0x3C,0x00,0x00,0x00,0x00},
-	{0x10,0x38,0x6C,0xC6,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0xFF,0x00},
-	{0x30,0x30,0x18,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0x00,0x78,0x0C,0x7C,0xCC,0xCC,0xCC,0x76,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0xE0,0x60,0x60,0x78,0x6C,0x66,0x66,0x66,0x66,0x7C,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0x00,0x7C,0xC6,0xC0,0xC0,0xC0,0xC6,0x7C,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x1C,0x0C,0x0C,0x3C,0x6C,0xCC,0xCC,0xCC,0xCC,0x76,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0x00,0x7C,0xC6,0xFE,0xC0,0xC0,0xC6,0x7C,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x1C,0x36,0x32,0x30,0x78,0x30,0x30,0x30,0x30,0x78,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0x00,0x76,0xCC,0xCC,0xCC,0xCC,0x7C,0x0C,0xCC,0x78,0x00,0x00},
-	{0x00,0x00,0xE0,0x60,0x60,0x6C,0x76,0x66,0x66,0x66,0x66,0xE6,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x18,0x18,0x00,0x38,0x18,0x18,0x18,0x18,0x18,0x3C,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x06,0x06,0x00,0x0E,0x06,0x06,0x06,0x06,0x06,0x06,0x66,0x3C,0x00,0x00},
-	{0x00,0x00,0xE0,0x60,0x60,0x66,0x6C,0x78,0x78,0x6C,0x66,0xE6,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x38,0x18,0x18,0x18,0x18,0x18,0x18,0x18,0x18,0x3C,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0x00,0xEC,0xFE,0xD6,0xD6,0xD6,0xD6,0xC6,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0x00,0xDC,0x66,0x66,0x66,0x66,0x66,0x66,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0x00,0x7C,0xC6,0xC6,0xC6,0xC6,0xC6,0x7C,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0x00,0xDC,0x66,0x66,0x66,0x66,0x7C,0x60,0x60,0xF0,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0x00,0x76,0xCC,0xCC,0xCC,0xCC,0x7C,0x0C,0x0C,0x1E,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0x00,0xDC,0x76,0x66,0x60,0x60,0x60,0xF0,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0x00,0x7C,0xC6,0x60,0x38,0x0C,0xC6,0x7C,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x10,0x30,0x30,0xFC,0x30,0x30,0x30,0x30,0x36,0x1C,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0x00,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0x76,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0x00,0xC6,0xC6,0xC6,0xC6,0x6C,0x38,0x10,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0x00,0xC6,0xC6,0xD6,0xD6,0xD6,0xFE,0x6C,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0x00,0xC6,0x6C,0x38,0x38,0x38,0x6C,0xC6,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0x00,0xC6,0xC6,0xC6,0xC6,0xC6,0x7E,0x06,0x0C,0xF8,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0x00,0xFE,0xCC,0x18,0x30,0x60,0xC6,0xFE,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x0E,0x18,0x18,0x18,0x70,0x18,0x18,0x18,0x18,0x0E,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x18,0x18,0x18,0x18,0x00,0x18,0x18,0x18,0x18,0x18,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x70,0x18,0x18,0x18,0x0E,0x18,0x18,0x18,0x18,0x70,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x76,0xDC,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00},
-};
-
-/* El panel no tiene fuente vectorial: se transliteran los acentos UTF-8
- * a ASCII para que el texto en espanol se lea completo. */
-static char fold_char(const char **p) {
-	const unsigned char *s = (const unsigned char *)*p;
-	if (s[0] < 0x80) { (*p)++; return (char)s[0]; }
-	if (s[0] == 0xC3 && s[1]) {
-		unsigned char c = s[1];
-		*p += 2;
-		switch (c) {
-		case 0xA1: return 'a'; case 0x81: return 'A';
-		case 0xA9: return 'e'; case 0x89: return 'E';
-		case 0xAD: return 'i'; case 0x8D: return 'I';
-		case 0xB3: return 'o'; case 0x93: return 'O';
-		case 0xBA: return 'u'; case 0x9A: return 'U';
-		case 0xB1: return 'n'; case 0x91: return 'N';
-		case 0xBC: return 'u'; case 0x9C: return 'U';
-		default:   return '?';
-		}
-	}
-	(*p)++;
-	return '?';
-}
-
-static void fchar(int x, int y, char c, uint16_t col, int sc) {
-	int i = c - 32;
-	if (i < 0 || i > 94) return;
-	const uint8_t *g = FNT[i];
-	for (int r = 0; r < 16; r++) {
-		uint8_t b = g[r];
-		if (!b) continue;
-		for (int c2 = 0; c2 < 8; c2++) {
-			if (!(b & (0x80 >> c2))) continue;
-			if (sc == 1) px(x + c2, y + r, col);
-			else frect(x + c2 * sc, y + r * sc, sc, sc, col);
-		}
-	}
-}
-
-static int text_w(const char *s, int sc) {
-	int n = 0;
-	while (*s) { fold_char(&s); n++; }
-	return n * 8 * sc;
-}
-
-static void fstr(int x, int y, const char *s, uint16_t col, int sc) {
-	while (*s) {
-		char c = fold_char(&s);
-		fchar(x, y, c, col, sc);
-		x += 8 * sc;
-	}
-}
-
-static void fstrc(int cx, int y, const char *s, uint16_t col, int sc) {
-	fstr(cx - text_w(s, sc) / 2, y, s, col, sc);
-}
-
-/* Texto centrado vertical y horizontalmente dentro de una caja. */
-static void fbox(int x, int y, int w, int h, const char *s, uint16_t col, int sc) {
-	fstr(x + (w - text_w(s, sc)) / 2, y + (h - 16 * sc) / 2, s, col, sc);
-}
-
-static void utoa(uint32_t v, char *b) {
-	char t[12]; int i = 0;
-	if (!v) { b[0] = '0'; b[1] = 0; return; }
-	while (v) { t[i++] = '0' + v % 10; v /= 10; }
-	for (int j = 0; j < i; j++) b[j] = t[i - 1 - j];
-	b[i] = 0;
-}
-
-/* ============================================================
- * REGISTRO TACTIL
- * Dibujar un boton registra su zona. No hay coordenadas duplicadas.
+ * ACCIONES
  * ============================================================ */
 
 /* Acciones simples: valores consecutivos bajos.
@@ -313,12 +93,18 @@ _Static_assert(A_RF_MODE + N_RF_MODES <= A_RF_FREQ, "modos RF pisan presets");
 _Static_assert(A_RF_FREQ + N_RF_FREQS <= A_WF_NET, "presets pisan redes WiFi");
 _Static_assert(A_WF_NET + N_WF_NETS <= 32767, "acciones fuera de rango");
 
+/* ============================================================
+ * REGISTRO TACTIL
+ * ============================================================ */
+
 typedef struct { int16_t x, y, w, h; int act; } Hit;
 #define MAX_HITS 80
 static Hit hits[MAX_HITS];
 static int nhits;
 static int press_act = -1;
 static bool press_live;
+static uint32_t press_until;
+static uint32_t wf_scan_until;
 
 static void hit_add(int x, int y, int w, int h, int act) {
 	if (nhits >= MAX_HITS || act == A_NONE) return;
@@ -337,189 +123,254 @@ static int hit_test(int x, int y) {
 	return A_NONE;
 }
 
+/* Capa Material: color con alfa, Roboto, widgets. Necesita lo de arriba. */
+#include "ui_material.c"
+
+static void utoa(uint32_t v, char *b) {
+	char t[16]; int i = 0;
+	if (!v) { b[0] = '0'; b[1] = 0; return; }
+	while (v) { t[i++] = '0' + v % 10; v /= 10; }
+	for (int j = 0; j < i; j++) b[j] = t[i - 1 - j];
+	b[i] = 0;
+}
+
+static void fmt_tenth(int v, char *b) {
+	char n[16]; utoa((uint32_t)(v / 10), n);
+	strcpy(b, n);
+	size_t l = strlen(b);
+	b[l] = '.'; b[l + 1] = '0' + v % 10; b[l + 2] = 0;
+}
+
 /* ============================================================
- * WIDGETS TACTILES
+ * ICONOS
+ * Trazos gruesos con extremo redondo, como los iconos Material Symbols.
  * ============================================================ */
 
-enum { BS_NORMAL, BS_ACCENT, BS_ON, BS_DANGER, BS_SEL, BS_OFF };
+enum { IC_SCOPE, IC_BOLT, IC_RF, IC_WIFI, IC_TUNE, IC_INFO,
+       IC_BACK, IC_HOME, IC_RECENTS, IC_CHECK, IC_LOCK, IC_REFRESH,
+       IC_CHEV_L, IC_CHEV_R, IC_SUN, IC_VOLUME, IC_MOON, IC_CLOSE };
 
-static void btn(int x, int y, int w, int h, const char *t, int style, int act) {
-	uint16_t fill = CRD, edge = BDR, fg = WHT;
-	if (style == BS_ACCENT) { fill = ACCD; edge = ACC; }
-	else if (style == BS_ON) { fill = GRND; edge = GRN; }
-	else if (style == BS_DANGER) { fill = REDD; edge = RED; }
-	else if (style == BS_SEL) { fill = ACCD; edge = ACC; }
-	else if (style == BS_OFF) { fill = BG; edge = CRD; fg = BDR; }
-	bool down = press_live && act != A_NONE && act == press_act;
-	if (down) { fill = ACCD; edge = WHT; }
-	card(x, y, w, h, 14, fill, edge);
-	int sc = text_w(t, 2) <= w - 16 ? 2 : 1;
-	fbox(x, y, w, h, t, fg, sc);
-	hit_add(x, y, w, h, act);
-}
-
-static void wbar(int x, int y, int w, int h, int pct, uint16_t fg) {
-	if (pct < 0) pct = 0;
-	if (pct > 100) pct = 100;
-	rrect(x, y, w, h, h / 2, BDR);
-	int fw = (w - 4) * pct / 100;
-	if (fw > 2) rrect(x + 2, y + 2, fw, h - 4, (h - 4) / 2, fg);
-}
-
-static void wswitch(int x, int y, bool on, int act) {
-	int w = 112, h = 64;
-	rrect(x, y, w, h, h / 2, on ? ACCD : BDR);
-	int kx = on ? x + w - 56 : x + 8;
-	rrect(kx, y + 8, 48, 48, 24, on ? WHT : MUT);
-	hit_add(x - 8, y - 8, w + 16, h + 16, act);
-}
-
-static void wbatt(int x, int y, uint8_t pct) {
-	drect(x, y, 44, 22, LGR);
-	frect(x + 44, y + 6, 4, 10, LGR);
-	int fw = 38 * pct / 100;
-	if (fw > 0) frect(x + 3, y + 3, fw, 16, pct > 20 ? GRN : RED);
-	char b[16]; utoa(pct, b);
-	strcat(b, "%");
-	fstr(x - text_w(b, 2) - 10, y + 3, b, MUT, 2);
-}
-
-/* Iconos vectoriales simples, dibujados con rectangulos y lineas. */
-static void icon(int cx, int cy, int kind, uint16_t col) {
-	if (kind == 0) {                    /* onda */
-		for (int i = -28; i <= 28; i++) {
-			int y = (int)(sinf((float)i * 0.16f) * 20.0f);
-			frect(cx + i, cy + y, 2, 3, col);
+static void icon(int cx, int cy, int kind, int s, uint16_t col) {
+	int t = s / 8 + 1;                      /* grosor proporcional */
+	if (kind == IC_SCOPE) {
+		int prevx = cx - s, prevy = cy;
+		for (int i = -s; i <= s; i++) {
+			int y = cy - (int)(sinf((float)i / (float)s * 3.14159f) * (s * 0.62f));
+			if (i > -s) m_line(prevx, prevy, cx + i, y, t, col);
+			prevx = cx + i; prevy = y;
 		}
-	} else if (kind == 1) {             /* rayo */
-		for (int j = -26; j < 0; j++) {
-			int w = 20 - (j + 26) * 14 / 26;
-			frect(cx - w / 2 + 6, cy + j, w > 3 ? w : 3, 1, col);
-		}
-		for (int j = 0; j < 26; j++) {
-			int w = 20 - j * 14 / 26;
-			frect(cx - w / 2 - 6, cy + j, w > 3 ? w : 3, 1, col);
-		}
-		frect(cx - 16, cy - 2, 32, 4, col);
-	} else if (kind == 2) {             /* RF */
-		rrect(cx - 4, cy - 4, 8, 8, 4, col);
+	} else if (kind == IC_BOLT) {
+		m_line(cx + s / 3, cy - s, cx - s / 3, cy + s / 8, t * 2, col);
+		m_line(cx - s / 3, cy + s / 8, cx + s / 4, cy + s / 8, t * 2, col);
+		m_line(cx + s / 4, cy + s / 8, cx - s / 4, cy + s, t * 2, col);
+	} else if (kind == IC_WIFI) {
+		/* Abanico de arcos sobre un punto: el icono clasico de WiFi. */
+		int base = cy + s * 2 / 3;
 		for (int k = 1; k <= 3; k++) {
-			int r = 8 + k * 8;
-			for (int a = -60; a <= 60; a += 3) {
-				float rad = (float)a * 0.01745f;
-				px(cx + (int)(sinf(rad) * r), cy - (int)(cosf(rad) * r), col);
-				px(cx - (int)(sinf(rad) * r), cy - (int)(cosf(rad) * r), col);
+			int r = s * k / 3;
+			for (int a = -55; a <= 55; a += 2) {
+				float rad = (float)a * 0.0174533f;
+				m_circle(cx + (int)(sinf(rad) * r), base - (int)(cosf(rad) * r),
+				         t / 2, col);
 			}
 		}
-	} else if (kind == 3) {             /* wifi */
-		for (int k = 1; k <= 3; k++) {
-			int r = k * 11;
-			for (int a = -50; a <= 50; a += 2) {
-				float rad = (float)a * 0.01745f;
-				int xx = cx + (int)(sinf(rad) * r);
-				int yy = cy + 16 - (int)(cosf(rad) * r);
-				frect(xx, yy, 2, 3, col);
+		m_circle(cx, base, t, col);
+	} else if (kind == IC_RF) {
+		/* Antena emitiendo: mastil vertical y ondas a los lados.
+		 * Antes eran arcos como los de WiFi y las dos apps se confundian
+		 * en el launcher. */
+		m_line(cx, cy - s, cx, cy + s, t, col);
+		m_circle(cx, cy - s, t + 1, col);
+		m_line(cx - s / 2, cy + s, cx + s / 2, cy + s, t, col);
+		for (int k = 1; k <= 2; k++) {
+			int r = s * k / 2;
+			for (int a = -40; a <= 40; a += 3) {
+				float rad = (float)a * 0.0174533f;
+				int yy = cy - s + (int)((1.0f - cosf(rad)) * r);
+				int xx = (int)(sinf(rad) * r);
+				m_circle(cx + s / 3 + xx, yy, t / 2, col);
+				m_circle(cx - s / 3 - xx, yy, t / 2, col);
 			}
 		}
-		rrect(cx - 3, cy + 12, 7, 7, 3, col);
-	} else if (kind == 4) {             /* ajustes */
+	} else if (kind == IC_TUNE) {
 		for (int k = 0; k < 3; k++) {
-			int y = cy - 18 + k * 18;
-			frect(cx - 26, y, 52, 3, col);
-			int kx = cx + (k == 0 ? -12 : k == 1 ? 10 : -4);
-			rrect(kx - 6, y - 5, 13, 13, 6, col);
+			int y = cy - s * 2 / 3 + k * (s * 2 / 3);
+			m_line(cx - s, y, cx + s, y, t, col);
+			int kx = cx + (k == 0 ? -s / 3 : k == 1 ? s / 3 : -s / 6);
+			m_circle(kx, y, s / 4, col);
 		}
-	} else {                            /* info */
-		for (int a = 0; a < 360; a += 2) {
-			float rad = (float)a * 0.01745f;
-			px(cx + (int)(cosf(rad) * 26), cy + (int)(sinf(rad) * 26), col);
-			px(cx + (int)(cosf(rad) * 25), cy + (int)(sinf(rad) * 25), col);
+	} else if (kind == IC_INFO) {
+		m_ring(cx, cy, s, t, col);
+		m_circle(cx, cy - s * 4 / 9, t, col);
+		m_line(cx, cy - s / 5, cx, cy + s * 4 / 9, t * 2, col);
+	} else if (kind == IC_BACK) {
+		/* Triangulo isosceles apuntando a la izquierda, como el back de
+		 * Android. La punta va a la izquierda y la base vertical a la
+		 * derecha; antes salia un rombo porque el ancho era simetrico. */
+		for (int j = -s; j <= s; j++) {
+			int w = (s - abs(j)) * 2;
+			if (w < 1) w = 1;
+			frect(cx + s - w, cy + j, w, 1, col);
 		}
-		frect(cx - 2, cy - 12, 5, 5, col);
-		frect(cx - 2, cy - 2, 5, 16, col);
+	} else if (kind == IC_HOME) {
+		m_ring(cx, cy, s, t + 1, col);
+	} else if (kind == IC_RECENTS) {
+		m_ring_rect(cx - s, cy - s, s * 2, s * 2, s / 3, col);
+	} else if (kind == IC_CHECK) {
+		m_line(cx - s, cy, cx - s / 4, cy + s * 3 / 5, t * 2, col);
+		m_line(cx - s / 4, cy + s * 3 / 5, cx + s, cy - s * 3 / 5, t * 2, col);
+	} else if (kind == IC_LOCK) {
+		m_rrect(cx - s * 3 / 4, cy - s / 8, s * 3 / 2, s, s / 4, col);
+		m_ring(cx, cy - s / 4, s * 3 / 5, t, col);
+		frect(cx - s * 3 / 4, cy - s / 8, s * 3 / 2, s / 3, M_CARD);
+	} else if (kind == IC_REFRESH) {
+		m_ring(cx, cy, s, t + 1, col);
+		frect(cx, cy - s - t, s + t, t * 3, M_CARD);
+		m_line(cx + s / 2, cy - s, cx + s + t, cy - s / 2, t * 2, col);
+	} else if (kind == IC_CHEV_L || kind == IC_CHEV_R) {
+		int d = kind == IC_CHEV_L ? 1 : -1;
+		m_line(cx + d * s / 2, cy - s, cx - d * s / 2, cy, t * 2, col);
+		m_line(cx - d * s / 2, cy, cx + d * s / 2, cy + s, t * 2, col);
+	} else if (kind == IC_SUN) {
+		m_circle(cx, cy, s * 2 / 5, col);
+		for (int a = 0; a < 360; a += 45) {
+			float r = (float)a * 0.0174533f;
+			m_line(cx + (int)(cosf(r) * s * 3 / 5), cy + (int)(sinf(r) * s * 3 / 5),
+			       cx + (int)(cosf(r) * s), cy + (int)(sinf(r) * s), t, col);
+		}
+	} else if (kind == IC_VOLUME) {
+		for (int j = -s / 2; j <= s / 2; j++)
+			frect(cx - s, cy + j, s / 2, 1, col);
+		m_line(cx - s / 2, cy - s / 2, cx, cy - s, t * 2, col);
+		m_line(cx, cy - s, cx, cy + s, t * 2, col);
+		m_line(cx, cy + s, cx - s / 2, cy + s / 2, t * 2, col);
+	} else if (kind == IC_CLOSE) {
+		m_line(cx - s, cy - s, cx + s, cy + s, t * 2, col);
+		m_line(cx + s, cy - s, cx - s, cy + s, t * 2, col);
+	} else if (kind == IC_MOON) {
+		m_circle(cx, cy, s, col);
+		m_circle(cx + s / 2, cy - s / 3, s * 3 / 4, M_CARD);
 	}
 }
 
+/* Boton de icono cuadrado, objetivo tactil completo. */
+static void m_ibtn(int x, int y, int w, int h, int kind, bool sel, bool enabled, int act) {
+	bool down = press_live && enabled && act != A_NONE && act == press_act;
+	uint16_t fill = sel ? M_PRIC : (down ? M_CARD2 : M_CARD);
+	uint16_t fg = !enabled ? M_OUT : (sel ? M_PRI : M_TXT);
+	if (!enabled) fill = M_SURF;
+	m_rrect(x, y, w, h, R_SMALL, fill);
+	icon(x + w / 2, y + h / 2, kind, h / 4, fg);
+	if (enabled) hit_add(x, y, w, h, act);
+}
+
 /* ============================================================
- * CROMO: barra de estado + riel lateral
+ * CROMO ANDROID
  * ============================================================ */
 
-static const char *app_names[] = {
-	"OSCILOSCOPIO", "FUENTE", "FLIPPER RF", "WIFI", "AJUSTES", "ACERCA DE"
+static const char *app_titles[] = {
+	"Gigaspark", "Osciloscopio", "Fuente", "Flipper RF", "WiFi", "Ajustes", "Acerca de"
 };
+static const uint16_t app_col[] = { M_PRI, M_CYN, M_YEL, M_PRP, M_PRI, M_PRI, M_PRI };
+
+static bool wf_on = true;
+static int st_br = 85;
+
+/* Barra de estado: hora a la izquierda, conectividad y bateria a la derecha. */
+static void status_bar(uint32_t t, uint8_t bat) {
+	frect(0, 0, SCR_W, STATUS_H, M_BG);
+	uint32_t mins = t / 60000u;
+	char hm[16];
+	snprintf(hm, sizeof(hm), "%u:%02u", (unsigned)(9 + mins / 60) % 24, (unsigned)(mins % 60));
+	m_text(PAD + 4, (STATUS_H - rf_fonts[F_SMALL].cap) / 2, hm, M_TXT, F_SMALL);
+
+	int rx = SCR_W - PAD;
+	/* Bateria: pastilla horizontal con nivel, como Android.
+	 * Orden de derecha a izquierda: pastilla, porcentaje, WiFi. Cada uno
+	 * con su hueco; antes el icono se montaba sobre el "100%". */
+	char pc[16]; utoa(bat, pc); strcat(pc, "%");
+	int bx = rx - 31, by = STATUS_H / 2 - 7;
+	m_text_r(bx - 10, (STATUS_H - rf_fonts[F_SMALL].cap) / 2, pc, M_TXT, F_SMALL);
+	m_rrect(bx, by, 28, 14, 4, M_OUT);
+	m_rrect(bx + 2, by + 2, 24 * bat / 100, 10, 3, bat > 20 ? M_GRN : M_RED);
+	frect(bx + 28, by + 4, 3, 6, M_OUT);
+	if (wf_on) {
+		int wx = bx - 10 - m_text_w(pc, F_SMALL) - 20;
+		icon(wx, STATUS_H / 2 + 3, IC_WIFI, 8, M_TXT);
+	}
+}
+
+/* App bar: titulo grande a la izquierda, acciones a la derecha. */
+static void app_bar(int screen, int act1, int ic1, int act2, int ic2, int act3, int ic3) {
+	frect(0, STATUS_H, SCR_W, APPBAR_H, M_BG);
+	m_text(PAD + 4, STATUS_H + (APPBAR_H - rf_fonts[F_TITLE].cap) / 2,
+	       app_titles[screen], app_col[screen], F_TITLE);
+	int x = SCR_W - PAD;
+	int acts[3] = { act3, act2, act1 }, ics[3] = { ic3, ic2, ic1 };
+	for (int i = 0; i < 3; i++) {
+		if (ics[i] < 0) continue;
+		x -= APPBAR_H;
+		m_ibtn(x, STATUS_H, APPBAR_H, APPBAR_H, ics[i], false, acts[i] != A_NONE, acts[i]);
+		x -= 8;
+	}
+}
+
+/* Barra de navegacion Android de 3 botones: atras, inicio, recientes. */
+static void nav_bar(int screen) {
+	frect(0, NAV_Y, SCR_W, NAV_H, M_SURF);
+	frect(0, NAV_Y, SCR_W, 1, M_OUT);
+	int bw = 120, gap = 40;
+	int total = bw * 3 + gap * 2;
+	int x = (SCR_W - total) / 2;
+	int kinds[3] = { IC_BACK, IC_HOME, IC_RECENTS };
+	int acts[3] = { A_BACK, A_HOME, A_MENU };
+	for (int i = 0; i < 3; i++) {
+		/* En el launcher no hay nada detras: atras se dibuja apagado. */
+		bool en = !(i == 0 && screen == 0);
+		bool down = press_live && en && press_act == acts[i];
+		if (down) m_rrect(x + 16, NAV_Y + 10, bw - 32, NAV_H - 20, R_SMALL, M_CARD2);
+		icon(x + bw / 2, NAV_Y + NAV_H / 2, kinds[i], 13, en ? M_TXT : M_OUT);
+		if (en) hit_add(x, NAV_Y, bw, NAV_H, acts[i]);
+		x += bw + gap;
+	}
+}
 
 static void chrome(uint32_t t, uint8_t bat, int screen) {
-	frect(0, 0, SCR_W, BAR_H, PANEL);
-	frect(0, BAR_H - 2, SCR_W, 2, BDR);
-
-	uint32_t s = t / 1000;
-	char tb[8];
-	tb[0] = '0' + (s / 3600) % 24 / 10; tb[1] = '0' + (s / 3600) % 24 % 10;
-	tb[2] = ':'; tb[3] = '0' + (s / 60) % 60 / 10; tb[4] = '0' + (s / 60) % 10;
-	tb[5] = 0;
-	fstr(PAD, (BAR_H - 32) / 2, tb, WHT, 2);
-
-	static const uint16_t accents[] = { ACC, GRN, ORG, PRP, ACC, ACC, ACC };
-	const char *title = screen == 0 ? "GIGASPARK OS" : app_names[screen - 1];
-	fstrc(SCR_W / 2, (BAR_H - 32) / 2, title, accents[screen % 7], 2);
-
-	wbatt(SCR_W - 60, (BAR_H - 22) / 2, bat);
-
-	/* Riel: tres objetivos grandes, alcanzables con el pulgar. */
-	frect(0, BAR_H, RAIL_W, CH, PANEL);
-	frect(RAIL_W - 2, BAR_H, 2, CH, BDR);
-	int bh = CH / 3;
-	for (int i = 0; i < 3; i++) {
-		int y = BAR_H + i * bh;
-		int act = i == 0 ? A_BACK : i == 1 ? A_HOME : A_MENU;
-		bool down = press_live && press_act == act;
-		bool disabled = i == 0 && screen == 0;
-		if (down) frect(0, y, RAIL_W - 2, bh, CRD2);
-		uint16_t col = disabled ? BDR : (i == 1 ? ACC : MUT);
-		int mx = RAIL_W / 2, my = y + bh / 2;
-		if (i == 0) {
-			for (int k = 0; k < 18; k++) {
-				frect(mx - 10 + k, my - k, 3, 3, col);
-				frect(mx - 10 + k, my + k, 3, 3, col);
-			}
-		} else if (i == 1) {
-			for (int a = 0; a < 2; a++)
-				for (int b = 0; b < 2; b++)
-					rrect(mx - 22 + a * 24, my - 22 + b * 24, 20, 20, 4, col);
-		} else {
-			for (int k = 0; k < 3; k++)
-				rrect(mx - 22, my - 18 + k * 14, 44, 6, 3, col);
-		}
-		if (!disabled) hit_add(0, y, RAIL_W, bh, act);
-		if (i < 2) frect(0, y + bh - 2, RAIL_W - 2, 2, CRD);
-	}
+	frect(0, 0, SCR_W, SCR_H, M_BG);
+	status_bar(t, bat);
+	nav_bar(screen);
 }
 
 /* ============================================================
  * LAUNCHER
+ * Rejilla de iconos circulares con etiqueta, como el launcher de Android.
  * ============================================================ */
 
-static int la_sel;
 #define LA_N N_APPS
+static int la_sel;
 static const char *la_nm[] = {
 	"Osciloscopio", "Fuente", "Flipper RF", "WiFi", "Ajustes", "Acerca de"
 };
+static const int la_ic[] = { IC_SCOPE, IC_BOLT, IC_RF, IC_WIFI, IC_TUNE, IC_INFO };
+static const uint16_t la_col[] = { M_CYN, M_YEL, M_PRP, M_PRI, M_GRN, M_MUT };
 
 static void app_launch(uint32_t t, uint8_t bat) {
 	chrome(t, bat, 0);
+	app_bar(0, A_NONE, -1, A_NONE, -1, A_NONE, -1);
 	int cols = 3, rows = 2;
 	int tw = (CW - 2 * PAD - (cols - 1) * GAP) / cols;
-	int th = (CH - 2 * PAD - (rows - 1) * GAP) / rows;
+	int th = (CH - (rows - 1) * GAP) / rows;
 	for (int i = 0; i < LA_N; i++) {
 		int c = i % cols, r = i / cols;
-		int x = CX + PAD + c * (tw + GAP);
-		int y = CY + PAD + r * (th + GAP);
-		bool sel = i == la_sel;
+		int x = CX + PAD + c * (tw + GAP), y = CY + r * (th + GAP);
 		bool down = press_live && press_act == A_APP + i;
-		card(x, y, tw, th, 16, down ? ACCD : (sel ? CRD2 : CRD),
-		     sel || down ? ACC : BDR);
-		icon(x + tw / 2, y + th / 2 - 18, i, down ? WHT : ACC);
-		fstrc(x + tw / 2, y + th - 44, la_nm[i], sel ? WHT : LGR, 2);
+		bool sel = i == la_sel;
+		m_rrect(x, y, tw, th, R_CARD, down ? M_CARD2 : (sel ? M_CARD : M_SURF));
+		int icx = x + tw / 2, icy = y + th / 2 - 16;
+		/* Icono sobre circulo tonal, sello del launcher Android. */
+		m_circle(icx, icy, 34, M_CARD2);
+		icon(icx, icy, la_ic[i], 19, la_col[i]);
+		m_text_c(x + tw / 2, y + th - 34, la_nm[i], M_TXT, F_BODY);
 		hit_add(x, y, tw, th, A_APP + i);
 	}
 }
@@ -528,113 +379,119 @@ static void app_launch(uint32_t t, uint8_t bat) {
  * OSCILOSCOPIO
  * ============================================================ */
 
-static float sc_phase;
 static bool sc_run = true, sc_ch1 = true, sc_ch2 = true;
 static int sc_tb = 3;
+static float sc_phase;
 static const char *tb_lbl[] = {
-	"100 us", "200 us", "500 us", "1 ms", "2 ms", "5 ms", "10 ms"
+	"100 µs", "200 µs", "500 µs", "1 ms", "2 ms", "5 ms", "10 ms"
 };
 
 static void app_scope(uint32_t t, uint8_t bat) {
 	chrome(t, bat, 1);
-	int by = CY;
-	int bh = CY + CH - by;
-	int ctrl_h = 88;
-	int gx = CX + PAD, gy = by + PAD;
-	int gw = CW - 2 * PAD, gh = bh - 2 * PAD - ctrl_h - GAP;
+	app_bar(1, A_SC_AUTO, IC_REFRESH, A_NONE, -1, A_NONE, -1);
+	int gh = CH - 88 - GAP;
+	int gx = CX + PAD, gy = CY, gw = CW - 2 * PAD;
+	m_card(gx, gy, gw, gh);
 
-	card(gx, gy, gw, gh, 12, 0x0825, BDR);
-	for (int i = 1; i < 10; i++) {
-		int x = gx + i * gw / 10;
-		for (int y = gy + 4; y < gy + gh - 4; y += 4) px(x, y, 0x18E6);
-	}
-	for (int i = 1; i < 4; i++) {
-		int y = gy + i * gh / 4;
-		for (int x = gx + 4; x < gx + gw - 4; x += 4) px(x, y, 0x18E6);
-	}
-	for (int x = gx + 4; x < gx + gw - 4; x += 2) px(x, gy + gh / 2, 0x2949);
+	int px0 = gx + 16, py0 = gy + 40, pw = gw - 32, ph = gh - 56;
+	/* Retícula tenue */
+	for (int i = 1; i < 10; i++)
+		frect(px0 + pw * i / 10, py0, 1, ph, M_CARD2);
+	for (int i = 1; i < 4; i++)
+		frect(px0, py0 + ph * i / 4, pw, 1, M_CARD2);
+	frect(px0, py0 + ph / 2, pw, 1, M_OUT);
+
+	char lbl[48];
+	snprintf(lbl, sizeof(lbl), "Base de tiempo  %s", tb_lbl[sc_tb]);
+	m_text(gx + 16, gy + 12, lbl, M_MUT, F_SMALL);
+	m_text_r(gx + gw - 16, gy + 12, sc_run ? "En marcha" : "Pausado",
+	         sc_run ? M_GRN : M_YEL, F_SMALL);
 
 	if (sc_run) sc_phase += 0.09f;
-	float cycles = 2.0f + (float)sc_tb * 0.7f;
+	float cycles = 1.0f + (float)sc_tb * 0.7f;
 	if (sc_ch1) {
-		for (int x = 4; x < gw - 4; x++) {
-			float a = (float)x / (float)gw * cycles * 6.28318f + sc_phase;
-			int y = gy + gh / 2 - (int)(sinf(a) * (float)(gh / 2 - 16));
-			frect(gx + x, y, 1, 3, GRN);
+		int prevy = py0 + ph / 2;
+		for (int i = 0; i <= pw; i++) {
+			float a = (float)i / (float)pw * cycles * 6.28318f + sc_phase;
+			int y = py0 + ph / 2 - (int)(sinf(a) * (ph * 0.36f));
+			if (i) m_trace(px0 + i, prevy, y, 3, M_CYN);
+			prevy = y;
 		}
 	}
 	if (sc_ch2) {
-		int prev = 0;
-		for (int x = 4; x < gw - 4; x++) {
-			float a = (float)x / (float)gw * cycles * 3.14159f + sc_phase * 0.7f;
-			int y = gy + gh / 2 + (sinf(a) > 0 ? -(gh / 5) : (gh / 5));
-			frect(gx + x, y, 1, 2, YEL);
-			if (x > 4 && y != prev) {
-				int lo = y < prev ? y : prev, hi = y < prev ? prev : y;
-				frect(gx + x, lo, 2, hi - lo + 2, YEL);
-			}
-			prev = y;
+		int prevy = py0 + ph / 2;
+		for (int i = 0; i <= pw; i++) {
+			float a = (float)i / (float)pw * cycles * 6.28318f + sc_phase * 0.7f;
+			/* Onda cuadrada: el trazo vertical une los dos niveles. */
+			int y = py0 + ph / 2 + (sinf(a) >= 0 ? -(ph * 3 / 10) : (ph * 3 / 10));
+			if (i) m_trace(px0 + i, prevy, y, 3, M_YEL);
+			prevy = y;
 		}
 	}
-	fstr(gx + 12, gy + 10, "CH1", sc_ch1 ? GRN : BDR, 1);
-	fstr(gx + 60, gy + 10, "CH2", sc_ch2 ? YEL : BDR, 1);
-	char tl[24]; strcpy(tl, tb_lbl[sc_tb]); strcat(tl, "/div");
-	fstr(gx + gw - text_w(tl, 1) - 12, gy + 10, tl, MUT, 1);
 
-	int cy2 = gy + gh + GAP;
-	int n = 6, bw = (gw - (n - 1) * GAP) / n;
-	btn(gx + 0 * (bw + GAP), cy2, bw, ctrl_h, "-", BS_NORMAL, A_SC_TB_M);
-	btn(gx + 1 * (bw + GAP), cy2, bw, ctrl_h, "+", BS_NORMAL, A_SC_TB_P);
-	btn(gx + 2 * (bw + GAP), cy2, bw, ctrl_h, "AUTO", BS_ACCENT, A_SC_AUTO);
-	btn(gx + 3 * (bw + GAP), cy2, bw, ctrl_h, "CH1", sc_ch1 ? BS_ON : BS_NORMAL, A_SC_CH1);
-	btn(gx + 4 * (bw + GAP), cy2, bw, ctrl_h, "CH2", sc_ch2 ? BS_ON : BS_NORMAL, A_SC_CH2);
-	btn(gx + 5 * (bw + GAP), cy2, bw, ctrl_h, sc_run ? "PAUSA" : "SEGUIR",
-	    sc_run ? BS_ACCENT : BS_ON, A_SC_RUN);
+	int y = gy + gh + GAP, h = 88;
+	int bw = (gw - 3 * 8) / 4;
+	m_btn(gx, y, bw, h, sc_run ? "Pausar" : "Reanudar", MB_FILL, A_SC_RUN);
+	m_chip(gx + (bw + 8), y, bw, h, "CH 1", sc_ch1, A_SC_CH1);
+	m_chip(gx + 2 * (bw + 8), y, bw, h, "CH 2", sc_ch2, A_SC_CH2);
+	int hx = gx + 3 * (bw + 8);
+	m_ibtn(hx, y, bw / 2 - 4, h, IC_CHEV_L, false, sc_tb > 0, A_SC_TB_M);
+	m_ibtn(hx + bw / 2 + 4, y, bw / 2 - 4, h, IC_CHEV_R, false, sc_tb < 6, A_SC_TB_P);
 }
 
 /* ============================================================
- * FUENTE DE PODER
+ * FUENTE DE ALIMENTACION
  * ============================================================ */
 
 static int ps_v = 50, ps_i = 10;   /* decimas: 5.0 V, 1.0 A */
 static bool ps_out;
 
-static void fmt_tenth(int v, char *b) {
-	char n[12]; utoa((uint32_t)(v / 10), n);
-	strcpy(b, n);
-	size_t l = strlen(b);
-	b[l] = '.'; b[l + 1] = '0' + v % 10; b[l + 2] = 0;
+static void psu_card(int x, int y, int w, int h, const char *title,
+                     const char *val, const char *unit, const char *range,
+                     int pct, uint16_t col, int am, int ap) {
+	m_card(x, y, w, h);
+	/* Cursor vertical: cada bloque avanza lo que mide. Asi el rango no
+	 * puede acabar debajo de los botones, que era el bug anterior. */
+	int cy = y + 8;
+	m_text_c(x + w / 2, cy, title, M_MUT, F_SMALL);
+	cy += rf_fonts[F_SMALL].cap + 4;
+
+	int vw = m_text_w(val, F_BIG), uw = m_text_w(unit, F_BODY);
+	int sx = x + (w - vw - uw - 8) / 2;
+	m_text(sx, cy, val, col, F_BIG);
+	m_text(sx + vw + 8, cy + rf_fonts[F_BIG].cap - rf_fonts[F_BODY].cap,
+	       unit, M_MUT, F_BODY);
+	cy += rf_fonts[F_BIG].cap + 6;
+
+	m_bar(x + 24, cy, w - 48, 8, pct, col);
+	cy += 8 + 4;
+	m_text_c(x + w / 2, cy, range, M_MUT, F_SMALL);
+	cy += rf_fonts[F_SMALL].cap + 6;
+
+	/* Lo que queda es para los botones, con 8 px de aire abajo. */
+	int bh = y + h - 8 - cy;
+	if (bh < TOUCH_MIN) bh = TOUCH_MIN;
+	int bw = (w - 48 - 12) / 2;
+	m_ibtn(x + 24, cy, bw, bh, IC_CHEV_L, false, true, am);
+	m_ibtn(x + 24 + bw + 12, cy, bw, bh, IC_CHEV_R, false, true, ap);
 }
 
 static void app_psu(uint32_t t, uint8_t bat) {
 	chrome(t, bat, 2);
-	int by = CY;
-	int bh = CY + CH - by;
-	int out_h = 88;
-	int cardh = bh - 2 * PAD - out_h - GAP;
+	app_bar(2, A_NONE, -1, A_NONE, -1, A_NONE, -1);
+	int ch = CH - 88 - GAP;
 	int cw = (CW - 2 * PAD - GAP) / 2;
-
-	for (int k = 0; k < 2; k++) {
-		int x = CX + PAD + k * (cw + GAP), y = by + PAD;
-		uint16_t ac = k == 0 ? GRN : YEL;
-		card(x, y, cw, cardh, 14, PANEL, BDR);
-		fstrc(x + cw / 2, y + 14, k == 0 ? "VOLTAJE" : "CORRIENTE MAX", MUT, 1);
-		char v[24]; fmt_tenth(k == 0 ? ps_v : ps_i, v);
-		strcat(v, k == 0 ? " V" : " A");
-		fstrc(x + cw / 2, y + 52, v, ac, 4);
-		int sh = 80, sw = (cw - 3 * GAP) / 2;
-		int sy = y + cardh - sh - PAD;
-		wbar(x + 24, sy - 62, cw - 48, 16,
-		     k == 0 ? ps_v * 100 / 240 : ps_i * 100 / 50, ac);
-		fstrc(x + cw / 2, sy - 34, k == 0 ? "0 - 24.0 V" : "0 - 5.0 A", MUT, 1);
-		btn(x + GAP, sy, sw, sh, "-", BS_NORMAL, k == 0 ? A_PS_V_M : A_PS_I_M);
-		btn(x + 2 * GAP + sw, sy, sw, sh, "+", BS_NORMAL, k == 0 ? A_PS_V_P : A_PS_I_P);
-	}
-
-	int oy = by + PAD + cardh + GAP;
-	btn(CX + PAD, oy, CW - 2 * PAD, out_h,
-	    ps_out ? "APAGAR SALIDA" : "ENCENDER SALIDA",
-	    ps_out ? BS_ON : BS_DANGER, A_PS_OUT);
+	char v[24], a[24], r[32];
+	fmt_tenth(ps_v, v); fmt_tenth(ps_i, a);
+	snprintf(r, sizeof(r), "0 – 24.0 V");
+	psu_card(CX + PAD, CY, cw, ch, "Voltaje", v, "V", r, ps_v * 100 / 240, M_GRN,
+	         A_PS_V_M, A_PS_V_P);
+	snprintf(r, sizeof(r), "0 – 5.0 A");
+	psu_card(CX + PAD + cw + GAP, CY, cw, ch, "Corriente máx.", a, "A", r, ps_i * 100 / 50, M_YEL,
+	         A_PS_I_M, A_PS_I_P);
+	m_btn(CX + PAD, CY + ch + GAP, CW - 2 * PAD, 88,
+	      ps_out ? "Apagar salida" : "Encender salida",
+	      ps_out ? MB_DANGER : MB_FILL, A_PS_OUT);
 }
 
 /* ============================================================
@@ -642,41 +499,35 @@ static void app_psu(uint32_t t, uint8_t bat) {
  * ============================================================ */
 
 static int fl_mode;
-static const char *fl_modes[] = { "SUB-GHz", "NFC/RFID", "IR", "GPIO" };
+static const char *fl_modes[] = { "Sub-GHz", "NFC", "IR", "GPIO" };
 static int rf_freq = 1;
 static const char *rf_lbl[] = { "315", "433.92", "868.35", "915" };
 static bool rf_scan;
 
 static void app_flip(uint32_t t, uint8_t bat) {
 	chrome(t, bat, 3);
-	int by = CY;
-	int rowh = 80, freqh = 100;
-	int y = by + PAD;
-	int iw = CW - 2 * PAD;
-
-	card(CX + PAD, y, iw, freqh, 14, PANEL, BDR);
-	char f[24]; strcpy(f, rf_lbl[rf_freq]); strcat(f, " MHz");
-	fstr(CX + PAD + 20, y + (freqh - 32) / 2, f, ACC, 2);
-	int bars = rf_scan ? (int)(t / 120) % 11 : 3 + (int)(t / 400) % 4;
-	for (int i = 0; i < 10; i++) {
-		int bx = CX + PAD + iw - 24 - (10 - i) * 16;
-		int h = 12 + i * 5;
-		frect(bx, y + freqh - 20 - h, 11, h, i < bars ? GRN : BDR);
+	app_bar(3, A_RF_SCAN, IC_REFRESH, A_NONE, -1, A_NONE, -1);
+	int y = CY;
+	int w = CW - 2 * PAD;
+	int fh = 92;
+	m_card(CX + PAD, y, w, fh);
+	m_text(CX + PAD + 20, y + 12, "Frecuencia", M_MUT, F_SMALL);
+	char f[32];
+	snprintf(f, sizeof(f), "%s MHz", rf_lbl[rf_freq]);
+	m_text(CX + PAD + 20, y + 36, f, M_PRP, F_NUM);
+	m_text_r(CX + PAD + w - 20, y + 40, rf_scan ? "Escaneando…" : fl_modes[fl_mode],
+	         rf_scan ? M_GRN : M_MUT, F_BODY);
+	if (rf_scan) {
+		int bx = CX + PAD + 20;
+		m_bar(bx, y + fh - 14, w - 40, 6, (int)(t / 12 % 100), M_GRN);
 	}
-	fstr(CX + PAD + 20, y + freqh - 24, fl_modes[fl_mode], MUT, 1);
-	y += freqh + GAP;
-
-	int mw = (iw - 3 * GAP) / 4;
-	for (int i = 0; i < 4; i++)
-		btn(CX + PAD + i * (mw + GAP), y, mw, rowh, fl_modes[i],
-		    i == fl_mode ? BS_SEL : BS_NORMAL, A_RF_MODE + i);
-	y += rowh + GAP;
-	for (int i = 0; i < 4; i++)
-		btn(CX + PAD + i * (mw + GAP), y, mw, rowh, rf_lbl[i],
-		    i == rf_freq ? BS_SEL : BS_NORMAL, A_RF_FREQ + i);
-	y += rowh + GAP;
-	btn(CX + PAD, y, iw, rowh, rf_scan ? "DETENER" : "ESCANEAR",
-	    rf_scan ? BS_ON : BS_ACCENT, A_RF_SCAN);
+	y += fh + 8;
+	int cw = (w - 3 * 8) / 4;
+	for (int i = 0; i < N_RF_MODES; i++)
+		m_chip(CX + PAD + i * (cw + 8), y, cw, 88, fl_modes[i], i == fl_mode, A_RF_MODE + i);
+	y += 88 + 8;
+	for (int i = 0; i < N_RF_FREQS; i++)
+		m_chip(CX + PAD + i * (cw + 8), y, cw, 88, rf_lbl[i], i == rf_freq, A_RF_FREQ + i);
 }
 
 /* ============================================================
@@ -684,99 +535,116 @@ static void app_flip(uint32_t t, uint8_t bat) {
  * ============================================================ */
 
 static const char *wf_nm[] = {
-	"Gigaspark_AP", "MiFibra-5G", "MOVISTAR_7F2E", "JAZZTEL_8FA2", "WIFI_GUEST"
+	"Gigaspark_AP", "MiFibra-5G", "MOVISTAR_7F2E", "TP-LINK_4A20", "Invitados"
 };
 static const int wf_sig[] = { 95, 85, 72, 55, 40 };
 static int wf_conn;
-static bool wf_on = true;
-static uint32_t wf_scan_until;
 static int wf_page;
+#define WF_PER 3
+#define WF_PAGES ((N_WF_NETS + WF_PER - 1) / WF_PER)
 
 static void app_wifi(uint32_t t, uint8_t bat) {
 	chrome(t, bat, 4);
-	int by = CY;
-	int iw = CW - 2 * PAD;
-	int y = by + PAD;
-	int th = 80, sq = 80, pgw = 72;
-	int bw = iw - 2 * sq - pgw - 3 * GAP;
-	int pages = (5 + 2) / 3;
-
-	btn(CX + PAD, y, sq, th, "<", wf_page > 0 ? BS_NORMAL : BS_OFF,
-	    wf_page > 0 ? A_WF_PREV : A_NONE);
-	btn(CX + PAD + sq + GAP, y, sq, th, ">",
-	    wf_page < pages - 1 ? BS_NORMAL : BS_OFF,
-	    wf_page < pages - 1 ? A_WF_NEXT : A_NONE);
-	char pg[16]; utoa((uint32_t)(wf_page + 1), pg);
-	strcat(pg, "/"); { char n[8]; utoa((uint32_t)pages, n); strcat(pg, n); }
-	fbox(CX + PAD + 2 * (sq + GAP), y, pgw, th, pg, MUT, 1);
-	btn(CX + PAD + 2 * sq + pgw + 3 * GAP, y, bw, th,
-	    t < wf_scan_until ? "BUSCANDO..." : "REESCANEAR", BS_ACCENT, A_WF_SCAN);
-	y += th + GAP;
-
+	bool scanning = wf_scan_until != 0;
+	/* app_bar coloca del final hacia la izquierda: el primer par acaba
+	 * mas a la izquierda. Orden visual correcto: < > refrescar. */
+	app_bar(4, wf_page > 0 ? A_WF_PREV : A_NONE, IC_CHEV_L,
+	        wf_page < WF_PAGES - 1 ? A_WF_NEXT : A_NONE, IC_CHEV_R,
+	        A_WF_SCAN, IC_REFRESH);
 	if (!wf_on) {
-		card(CX + PAD, y, iw, 88, 14, CRD, BDR);
-		fbox(CX + PAD, y, iw, 88, "WiFi apagado - activalo en Ajustes", MUT, 1);
+		m_card(CX + PAD, CY, CW - 2 * PAD, 140);
+		m_text_c(CW / 2, CY + 34, "WiFi apagado", M_TXT, F_TITLE);
+		m_text_c(CW / 2, CY + 84, "Actívalo en Ajustes", M_MUT, F_BODY);
 		return;
 	}
-	int rowh = 88;
-	for (int k = 0; k < 3; k++) {
-		int i = wf_page * 3 + k;
-		if (i >= 5) break;
-		int x = CX + PAD;
+	int rowh = (CH - 2 * 10) / WF_PER;
+	int y = CY;
+	for (int k = 0; k < WF_PER; k++) {
+		int i = wf_page * WF_PER + k;
+		if (i >= N_WF_NETS) break;
+		bool conn = i == wf_conn;
 		bool down = press_live && press_act == A_WF_NET + i;
-		card(x, y, iw, rowh, 14, down ? CRD2 : CRD, i == wf_conn ? GRN : BDR);
-		fstr(x + 20, y + (rowh - 32) / 2, wf_nm[i], WHT, 2);
-		char s[16]; utoa((uint32_t)wf_sig[i], s); strcat(s, "%");
-		fstr(x + iw - 150, y + (rowh - 16) / 2, s, MUT, 1);
-		if (i == wf_conn) fstr(x + iw - 70, y + (rowh - 16) / 2, "OK", GRN, 1);
-		wbar(x + iw - 250, y + rowh / 2 - 6, 80, 12, wf_sig[i], wf_sig[i] > 60 ? GRN : YEL);
-		hit_add(x, y, iw, rowh, A_WF_NET + i);
-		y += rowh + GAP;
+		m_rrect(CX + PAD, y, CW - 2 * PAD, rowh, R_CARD,
+		        conn ? M_PRIC : (down ? M_CARD2 : M_CARD));
+		int icx = CX + PAD + 44;
+		icon(icx, y + rowh / 2 + 4, IC_WIFI, 17, conn ? M_PRI : M_MUT);
+		int tx = CX + PAD + 84;
+		m_text_ell(tx, y + rowh / 2 - 26, 300, wf_nm[i], conn ? M_PRI : M_TXT, F_BODY);
+		m_text(tx, y + rowh / 2 + 6, conn ? "Conectado" : "Segura · WPA2",
+		       M_MUT, F_SMALL);
+		int rx = CX + CW - PAD - 24;
+		if (conn) { icon(rx - 14, y + rowh / 2, IC_CHECK, 12, M_PRI); rx -= 48; }
+		else if (i != 0) icon(rx - 14, y + rowh / 2, IC_LOCK, 11, M_MUT);
+		char pc[16]; utoa((uint32_t)wf_sig[i], pc); strcat(pc, "%");
+		m_text_r(rx - 40, y + rowh / 2 - 22, pc, M_MUT, F_SMALL);
+		m_bar(rx - 130, y + rowh / 2 + 6, 90, 8, wf_sig[i], conn ? M_PRI : M_GRN);
+		hit_add(CX + PAD, y, CW - 2 * PAD, rowh, A_WF_NET + i);
+		y += rowh + 10;
 	}
+	if (scanning)
+		m_text_c(CW / 2, NAV_Y - 22, "Buscando redes…", M_GRN, F_SMALL);
 }
 
 /* ============================================================
  * AJUSTES
+ * Rejilla 2x2 de tarjetas con switch, slider y selector.
  * ============================================================ */
 
 static bool st_sound = true;
-static int st_br = 85;
 static int st_sleep = 1;
 static const int st_sleeps[] = { 15, 30, 60, 0 };
 static int st_sel;
 
 static void app_set(uint32_t t, uint8_t bat) {
 	chrome(t, bat, 5);
-	int by = CY;
-	int rowh = 88;
-	int y = by + PAD;
-	int w = CW - 2 * PAD;
-
+	app_bar(5, A_NONE, -1, A_NONE, -1, A_NONE, -1);
+	int cols = 2, rows = 2;
+	int tw = (CW - 2 * PAD - GAP) / cols;
+	/* 8 px de aire antes de la barra de navegacion. */
+	int th = (CH - GAP - 8) / rows;
 	for (int i = 0; i < 4; i++) {
-		bool sel = i == st_sel;
-		card(CX + PAD, y, w, rowh, 14, CRD, sel ? ACC : BDR);
-		if (i == 0) {
-			fstr(CX + PAD + 20, y + (rowh - 32) / 2, "WiFi", WHT, 2);
-			wswitch(CX + PAD + w - 132, y + (rowh - 64) / 2, wf_on, A_ST_WIFI);
+		int c = i % cols, r = i / cols;
+		int x = CX + PAD + c * (tw + GAP), y = CY + r * (th + GAP);
+		bool down = press_live && press_act == A_ST_SLEEP && i == 3;
+		m_rrect(x, y, tw, th, R_CARD, down ? M_CARD2 : M_CARD);
+
+		/* Cabecera comun: icono, titulo y estado. Nunca se pisa con el
+		 * control porque el control va a la derecha o debajo del texto. */
+		int kind = i == 0 ? IC_WIFI : i == 1 ? IC_SUN : i == 2 ? IC_VOLUME : IC_MOON;
+		uint16_t ic = i == 0 ? (wf_on ? M_PRI : M_MUT) : i == 1 ? M_YEL
+		            : i == 2 ? (st_sound ? M_PRI : M_MUT) : M_PRP;
+		icon(x + 40, y + 42, kind, 16, ic);
+		static const char *names[] = { "WiFi", "Brillo", "Sonido táctil", "Suspensión" };
+		m_text(x + 76, y + 24, names[i], M_TXT, F_BODY);
+
+		char sub[32];
+		if (i == 0) snprintf(sub, sizeof(sub), "%s", wf_on ? "Activado" : "Desactivado");
+		else if (i == 1) { utoa((uint32_t)st_br, sub); strcat(sub, "%"); }
+		else if (i == 2) snprintf(sub, sizeof(sub), "%s", st_sound ? "Activado" : "Silencio");
+		else if (st_sleeps[st_sleep] == 0) snprintf(sub, sizeof(sub), "Nunca");
+		else snprintf(sub, sizeof(sub), "%d segundos", st_sleeps[st_sleep]);
+		m_text(x + 76, y + 52, sub, M_MUT, F_SMALL);
+
+		if (i == 0 || i == 2) {
+			/* Switch centrado en vertical a la derecha, como en Ajustes
+			 * de Android. Antes iba abajo y descompensaba la tarjeta. */
+			m_switch(x + tw - 128, y + (th - 60) / 2, i == 0 ? wf_on : st_sound,
+			         i == 0 ? A_ST_WIFI : A_ST_SOUND);
 		} else if (i == 1) {
-			fstr(CX + PAD + 20, y + (rowh - 32) / 2, "Brillo", WHT, 2);
-			int bw = 200;
-			wbar(CX + PAD + 180, y + rowh / 2 - 8, bw, 16, st_br, ACC);
-			char b[16]; utoa((uint32_t)st_br, b); strcat(b, "%");
-			fstr(CX + PAD + 400, y + (rowh - 16) / 2, b, MUT, 1);
-			btn(CX + PAD + w - 184, y + 4, 80, rowh - 8, "-", BS_NORMAL, A_ST_BR_M);
-			btn(CX + PAD + w - 92, y + 4, 80, rowh - 8, "+", BS_NORMAL, A_ST_BR_P);
-		} else if (i == 2) {
-			fstr(CX + PAD + 20, y + (rowh - 32) / 2, "Sonido tactil", WHT, 2);
-			wswitch(CX + PAD + w - 132, y + (rowh - 64) / 2, st_sound, A_ST_SOUND);
+			/* Slider debajo del texto; los botones a la derecha, centrados.
+			 * Antes el 85% caia encima del track. */
+			m_slider(x + 24, y + th - 40, tw - 48 - 184, st_br, M_YEL);
+			m_ibtn(x + tw - 184, y + (th - 80) / 2, 80, 80, IC_CHEV_L,
+			       false, st_br > 20, A_ST_BR_M);
+			m_ibtn(x + tw - 96, y + (th - 80) / 2, 80, 80, IC_CHEV_R,
+			       false, st_br < 100, A_ST_BR_P);
 		} else {
-			fstr(CX + PAD + 20, y + (rowh - 32) / 2, "Suspension", WHT, 2);
-			char b[16];
-			if (st_sleeps[st_sleep] == 0) strcpy(b, "Nunca");
-			else { utoa((uint32_t)st_sleeps[st_sleep], b); strcat(b, " s"); }
-			btn(CX + PAD + w - 200, y + 4, 188, rowh - 8, b, BS_NORMAL, A_ST_SLEEP);
+			/* Preferencia de lista: toda la tarjeta cicla el valor y un
+			 * chevron lo indica. Un boton "Cambiar" dentro no cabia sin
+			 * tapar el titulo ni el estado. */
+			icon(x + tw - 40, y + th / 2, IC_CHEV_R, 12, M_MUT);
+			hit_add(x, y, tw, th, A_ST_SLEEP);
 		}
-		y += rowh + GAP;
 	}
 }
 
@@ -786,66 +654,77 @@ static void app_set(uint32_t t, uint8_t bat) {
 
 static void app_about(uint32_t t, uint8_t bat) {
 	chrome(t, bat, 6);
-	int by = CY;
-	static const char *k[] = {
-		"Equipo", "MCU", "Panel", "Tactil", "Sistema", "Memoria"
-	};
+	app_bar(6, A_NONE, -1, A_NONE, -1, A_NONE, -1);
+	static const char *k[] = { "Equipo", "MCU", "Panel", "Táctil", "Sistema", "Memoria" };
 	static const char *v[] = {
 		"Arduino GIGA R1 + Display Shield",
-		"STM32H747XI  M7 480 + M4 240 MHz",
-		"480x800 nativo  ST7701 MIPI DSI",
-		"Goodix GT911  I2C  5 puntos",
-		"Gigaspark OS  Zephyr RTOS",
+		"STM32H747XI · M7 480 + M4 240 MHz",
+		"480×800 nativo · ST7701 MIPI DSI",
+		"Goodix GT911 · I²C · 5 puntos",
+		"Gigaspark OS · Zephyr RTOS",
 		"Buddy + zRAM"
 	};
-	int rowh = (SCR_H - PAD - (by + PAD) - 5 * 6) / 6;
-	for (int i = 0; i < 6; i++) {
-		int y = by + PAD + i * (rowh + 6);
-		if (y + rowh > SCR_H - PAD) break;
-		card(CX + PAD, y, CW - 2 * PAD, rowh, 10, CRD, BDR);
-		fstr(CX + PAD + 16, y + (rowh - 16) / 2, k[i], WHT, 1);
-		fstr(CX + PAD + 160, y + (rowh - 16) / 2, v[i], MUT, 1);
+	int n = 6;
+	int rowh = (CH - (n - 1) * 6) / n;
+	for (int i = 0; i < n; i++) {
+		int y = CY + i * (rowh + 6);
+		m_rrect(CX + PAD, y, CW - 2 * PAD, rowh, R_SMALL, M_CARD);
+		m_text(CX + PAD + 20, y + (rowh - rf_fonts[F_SMALL].cap) / 2, k[i], M_MUT, F_SMALL);
+		m_text_ell(CX + PAD + 160, y + (rowh - rf_fonts[F_BODY].cap) / 2,
+		           CW - 2 * PAD - 180, v[i], M_TXT, F_BODY);
 	}
 }
 
 /* ============================================================
- * AJUSTES RAPIDOS (panel superpuesto)
+ * AJUSTES RAPIDOS (panel de recientes)
  * ============================================================ */
 
 static bool qs_open;
 
 static void draw_qs(uint32_t t, uint8_t bat) {
-	int w = 360, x = SCR_W - w;
-	frect(CX, CY, SCR_W - CX, SCR_H - CY, 0x0000);
-	frect(x, 0, w, SCR_H, PANEL);
-	frect(x, 0, 2, SCR_H, BDR);
+	(void)t; (void)bat;
+	/* Scrim semitransparente sobre el contenido, como Android. */
+	for (int j = 0; j < SCR_H; j++)
+		for (int i = 0; i < SCR_W; i++)
+			fb[j * SCR_W + i] = mix565(fb[j * SCR_W + i], 0x0000, 150);
 	nhits = 0;
-	hit_add(CX, CY, x - CX, SCR_H - CY, A_QS_CLOSE);
-	fstr(x + PAD, 20, "AJUSTES RAPIDOS", MUT, 1);
-	btn(x + w - 96, 8, 80, 80, "X", BS_NORMAL, A_QS_CLOSE);
+	int w = 620, h = 300, x = (SCR_W - w) / 2, y = (SCR_H - h) / 2;
+	hit_add(0, 0, SCR_W, SCR_H, A_QS_CLOSE);
+	m_rrect(x, y, w, h, R_CARD, M_CARD);
+	m_text(x + 24, y + 20, "Ajustes rápidos", M_TXT, F_TITLE);
+	m_ibtn(x + w - 88, y + 12, 80, 80, IC_CLOSE, false, true, A_QS_CLOSE);
 
-	int y = 110;
-	fstr(x + PAD, y, "Brillo", WHT, 2); y += 40;
-	wbar(x + PAD, y, w - 2 * PAD - 184, 16, st_br, ACC);
-	btn(x + w - PAD - 176, y - 32, 80, 80, "-", BS_NORMAL, A_ST_BR_M);
-	btn(x + w - PAD - 84, y - 32, 80, 80, "+", BS_NORMAL, A_ST_BR_P);
-	y += 70;
-	fstr(x + PAD, y + 16, "WiFi", WHT, 2);
-	wswitch(x + w - 132, y, wf_on, A_ST_WIFI);
-	y += 90;
-	char b[16]; utoa(bat, b); strcat(b, "% bateria");
-	fstr(x + PAD, y, b, MUT, 1);
-	y += 40;
-	btn(x + PAD, y, w - 2 * PAD, 88, "ABRIR AJUSTES", BS_ACCENT, A_APP + 4);
-	(void)t;
+	int ry = y + 96;
+	m_rrect(x + 24, ry, w - 48, 84, R_SMALL, M_CARD2);
+	icon(x + 60, ry + 42, IC_SUN, 15, M_YEL);
+	m_slider(x + 96, ry + 34, w - 48 - 96 - 184, st_br, M_YEL);
+	m_ibtn(x + w - 208, ry + 2, 80, 80, IC_CHEV_L, false, st_br > 20, A_ST_BR_M);
+	m_ibtn(x + w - 120, ry + 2, 80, 80, IC_CHEV_R, false, st_br < 100, A_ST_BR_P);
+
+	int ty = ry + 96;
+	int tw = (w - 48 - 12) / 2;
+	m_chip(x + 24, ty, tw, 84, wf_on ? "WiFi ON" : "WiFi OFF", wf_on, A_ST_WIFI);
+	m_chip(x + 36 + tw, ty, tw, 84, st_sound ? "Sonido ON" : "Sonido OFF", st_sound, A_ST_SOUND);
 }
 
 /* ============================================================
  * RENDER
  * ============================================================ */
 
+/* Factor de retroiluminacion en 0..255.
+ *
+ * El brillo NO se aplica al framebuffer. En el hardware real es el PWM de la
+ * retroiluminacion: escala la luz emitida, no los valores del panel. Aplicarlo
+ * dentro del RGB565 obligaba a recuantizar tonos ya oscuros, donde solo hay 32
+ * o 64 niveles, y el gris viraba a verde (la tarjeta pasaba de (33,36,41) a
+ * (24,32,33), con verde==azul). Aqui se entrega el factor para aplicarlo tras
+ * expandir a 8 bits, que es donde hay precision. */
+static uint8_t backlight_scale(void) {
+	return (uint8_t)(40 + st_br * 215 / 100);
+}
+
 static bool screen_is_animated(int screen) {
-	return screen == 1 || screen == 3 || press_live;
+	return screen == 1 || (screen == 3 && rf_scan) || press_live || wf_scan_until != 0;
 }
 
 static void render_screen(int screen, uint32_t t, uint8_t bat) {
@@ -862,23 +741,11 @@ static void render_screen(int screen, uint32_t t, uint8_t bat) {
 	}
 	if (qs_open) draw_qs(t, bat);
 
-	/* Brillo: escalado en RGB565 sin sacar el pixel del formato del panel. */
-	if (st_br < 100) {
-		int k = 40 + st_br * 215 / 100;
-		for (size_t i = 0; i < sizeof(fb) / sizeof(fb[0]); i++) {
-			uint16_t c = fb[i];
-			uint16_t r = (uint16_t)(((c >> 11) & 31) * k / 255);
-			uint16_t g = (uint16_t)(((c >> 5) & 63) * k / 255);
-			uint16_t b = (uint16_t)((c & 31) * k / 255);
-			fb[i] = (uint16_t)((r << 11) | (g << 5) | b);
-		}
-	}
 }
 
 /* ============================================================
  * ENTRADA
  * ============================================================ */
-
 static bool dispatch(int act, int *screen) {
 	if (act == A_NONE) return false;
 	if (act == A_QS_CLOSE) { qs_open = false; return true; }
@@ -910,7 +777,7 @@ static bool dispatch(int act, int *screen) {
 	case A_RF_SCAN: rf_scan = !rf_scan; return true;
 	case A_WF_PREV: if (wf_page > 0) wf_page--; return true;
 	case A_WF_NEXT: if (wf_page < 1) wf_page++; return true;
-	case A_WF_SCAN: wf_scan_until = SDL_GetTicks() + 1200; return true;
+	case A_WF_SCAN: wf_scan_until = gsp_ticks() + 1200; return true;
 	case A_ST_WIFI: wf_on = !wf_on; return true;
 	case A_ST_SOUND: st_sound = !st_sound; return true;
 	case A_ST_BR_M: if (st_br > 20) st_br -= 5; return true;
@@ -924,18 +791,16 @@ static bool dispatch(int act, int *screen) {
 	return false;
 }
 
-static uint32_t press_until;
 
 static bool handle_event(const SDL_Event *ev, int *screen, bool *run) {
+	/* SDL2 agrupaba los eventos de ventana en SDL_WINDOWEVENT; SDL3 emite
+	 * uno por caso. gsp_window_needs_redraw() abstrae la diferencia. */
+	if (gsp_window_needs_redraw(ev)) return true;
 	switch (ev->type) {
-	case SDL_QUIT: *run = false; return false;
-	case SDL_WINDOWEVENT:
-		return ev->window.event == SDL_WINDOWEVENT_EXPOSED ||
-		       ev->window.event == SDL_WINDOWEVENT_SIZE_CHANGED ||
-		       ev->window.event == SDL_WINDOWEVENT_RESTORED;
-	case SDL_KEYDOWN:
-		switch (ev->key.keysym.sym) {
-		case SDLK_q: *run = false; return false;
+	case GSP_EV_QUIT: *run = false; return false;
+	case GSP_EV_KEYDOWN:
+		switch (gsp_event_key(ev)) {
+		case GSP_KEY_Q: *run = false; return false;
 		case SDLK_ESCAPE: qs_open = false; *screen = 0; return true;
 		case SDLK_UP:
 			if (*screen == 0 && la_sel > 0) { la_sel--; return true; }
@@ -951,18 +816,18 @@ static bool handle_event(const SDL_Event *ev, int *screen, bool *run) {
 		case SDLK_1: case SDLK_2: case SDLK_3:
 		case SDLK_4: case SDLK_5: case SDLK_6:
 			qs_open = false;
-			*screen = ev->key.keysym.sym - SDLK_1 + 1;
+			*screen = gsp_event_key(ev) - SDLK_1 + 1;
 			return true;
 		default: break;
 		}
 		break;
-	case SDL_MOUSEBUTTONDOWN:
+	case GSP_EV_MOUSEDOWN:
 		if (ev->button.button == SDL_BUTTON_LEFT) {
 			int act = hit_test(ev->button.x / SCALE, ev->button.y / SCALE);
 			if (act == A_NONE) return false;
 			press_act = act;
 			press_live = true;
-			press_until = SDL_GetTicks() + 110;
+			press_until = gsp_ticks() + 110;
 			return dispatch(act, screen) || true;
 		}
 		break;
@@ -978,9 +843,13 @@ static bool handle_event(const SDL_Event *ev, int *screen, bool *run) {
 static int present_frame(SDL_Renderer *ren, SDL_Texture *tex, int screen,
 			 uint32_t t, uint8_t bat) {
 	render_screen(screen, t, bat);
-	if (SDL_UpdateTexture(tex, NULL, fb, SCR_W * sizeof(uint16_t)) < 0 ||
-	    SDL_RenderClear(ren) < 0 || SDL_RenderCopy(ren, tex, NULL, NULL) < 0) {
-		fprintf(stderr, "SDL2 render: %s\n", SDL_GetError());
+	/* Brillo = retroiluminacion (PWM), no contenido del panel. Se atenua en
+	 * el renderer, despues de expandir a 8 bits: ver backlight_scale(). */
+	uint8_t k = backlight_scale();
+	gsp_color_mod(tex, k, k, k);
+	if (!gsp_update_texture(tex, fb, SCR_W * (int)sizeof(uint16_t)) ||
+	    !gsp_clear(ren) || !gsp_copy(ren, tex)) {
+		fprintf(stderr, "SDL%d render: %s\n", GSP_SDL_MAJOR, SDL_GetError());
 		return -1;
 	}
 	SDL_RenderPresent(ren);
@@ -988,9 +857,9 @@ static int present_frame(SDL_Renderer *ren, SDL_Texture *tex, int screen,
 }
 
 static int smoke_test(void) {
-	SDL_Window *win = SDL_CreateWindow("Gigaspark smoke", 0, 0, WIN_W, WIN_H, SDL_WINDOW_HIDDEN);
+	SDL_Window *win = gsp_window("Gigaspark smoke", WIN_W, WIN_H, true);
 	if (!win) return 1;
-	SDL_Renderer *ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_SOFTWARE);
+	SDL_Renderer *ren = gsp_renderer(win, true);
 	SDL_Texture *tex = ren ? SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGB565,
 						  SDL_TEXTUREACCESS_STREAMING, SCR_W, SCR_H) : NULL;
 	int result = tex ? 0 : 1;
@@ -1019,8 +888,8 @@ int main(int argc, char *argv[]) {
 		fprintf(stderr, "Uso: %s [--smoke]\n", argv[0]);
 		return 2;
 	}
-	if (SDL_Init(SDL_INIT_VIDEO) < 0) {
-		fprintf(stderr, "SDL2: %s\n", SDL_GetError());
+	if (!gsp_init(SDL_INIT_VIDEO)) {
+		fprintf(stderr, "SDL%d: %s\n", GSP_SDL_MAJOR, SDL_GetError());
 		return 1;
 	}
 	if (smoke) {
@@ -1030,19 +899,19 @@ int main(int argc, char *argv[]) {
 		return result;
 	}
 
-	SDL_Window *win = SDL_CreateWindow("Gigaspark OS - Simulador tactil 800x480",
-		SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, WIN_W, WIN_H, SDL_WINDOW_SHOWN);
+	SDL_Window *win = gsp_window("Gigaspark OS - Simulador tactil 800x480",
+	                             WIN_W, WIN_H, false);
 	if (!win) {
-		fprintf(stderr, "SDL2 window: %s\n", SDL_GetError());
+		fprintf(stderr, "SDL%d window: %s\n", GSP_SDL_MAJOR, SDL_GetError());
 		SDL_Quit();
 		return 1;
 	}
-	SDL_Renderer *ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED);
-	if (!ren) ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_SOFTWARE);
+	SDL_Renderer *ren = gsp_renderer(win, false);
+	if (!ren) ren = gsp_renderer(win, true);
 	SDL_Texture *tex = ren ? SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGB565,
 		SDL_TEXTUREACCESS_STREAMING, SCR_W, SCR_H) : NULL;
 	if (!tex) {
-		fprintf(stderr, "SDL2 renderer/texture: %s\n", SDL_GetError());
+		fprintf(stderr, "SDL%d renderer/texture: %s\n", GSP_SDL_MAJOR, SDL_GetError());
 		if (ren) SDL_DestroyRenderer(ren);
 		SDL_DestroyWindow(win);
 		SDL_Quit();
@@ -1052,26 +921,26 @@ int main(int argc, char *argv[]) {
 	bool run = true, dirty = true;
 	int screen = 0, result = 0;
 	uint8_t bat = 100;
-	uint32_t last_battery = SDL_GetTicks(), last_minute = UINT32_MAX;
+	uint32_t last_battery = gsp_ticks(), last_minute = UINT32_MAX;
 	SDL_Event ev;
 	while (run) {
-		uint32_t frame_start = SDL_GetTicks();
+		uint32_t frame_start = gsp_ticks();
 		if (!screen_is_animated(screen) && !dirty) {
-			uint32_t now = SDL_GetTicks();
+			uint32_t now = gsp_ticks();
 			uint32_t elapsed = now - last_battery;
 			uint32_t wait = elapsed >= 30000 ? 1 : 30000 - elapsed;
 			uint32_t to_minute = 60000 - now % 60000;
 			if (to_minute < wait) wait = to_minute;
 			if (wf_scan_until && wf_scan_until > now && wf_scan_until - now < wait)
 				wait = wf_scan_until - now;
-			if (SDL_WaitEventTimeout(&ev, (int)wait))
+			if (gsp_wait_event(&ev, (int)wait))
 				dirty = handle_event(&ev, &screen, &run) || dirty;
 		}
-		while (SDL_PollEvent(&ev))
+		while (gsp_poll_event(&ev))
 			dirty = handle_event(&ev, &screen, &run) || dirty;
 		if (!run) break;
 
-		uint32_t now = SDL_GetTicks();
+		uint32_t now = gsp_ticks();
 		if (press_live && now >= press_until) { press_live = false; dirty = true; }
 		if (wf_scan_until && now >= wf_scan_until) { wf_scan_until = 0; dirty = true; }
 		if (now - last_battery >= 30000) {
@@ -1085,7 +954,7 @@ int main(int argc, char *argv[]) {
 			dirty = false;
 		}
 		if (screen_is_animated(screen)) {
-			uint32_t elapsed = SDL_GetTicks() - frame_start;
+			uint32_t elapsed = gsp_ticks() - frame_start;
 			if (elapsed < FRAME) SDL_Delay(FRAME - elapsed);
 		}
 	}

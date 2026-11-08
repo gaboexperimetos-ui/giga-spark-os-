@@ -13,6 +13,7 @@
 #include "launcher.h"
 #include "ipc_protocol.h"
 #include "nav_bar.h"
+#include "ui_theme.h"
 
 #include <zephyr/kernel.h>
 #include <zephyr/ipc/ipc_service.h>
@@ -137,13 +138,13 @@ int launcher_init(struct ipc_ept *ept)
 
 	/* Build the LVGL UI */
 	main_screen = lv_scr_act();
-	lv_obj_set_style_bg_color(main_screen, lv_color_hex(0x1a1a2e), 0);
+	lv_obj_set_style_bg_color(main_screen, lv_color_hex(UI_BG), 0);
 
 	/* Title */
 	lv_obj_t *title = lv_label_create(main_screen);
 	lv_label_set_text(title, "Gigaspark OS - Launcher");
 	lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
-	lv_obj_set_style_text_color(title, lv_color_hex(0xe94560), 0);
+	lv_obj_set_style_text_color(title, lv_color_hex(UI_PRIMARY), 0);
 	lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
 
 	/* Create buttons for each app */
@@ -170,15 +171,15 @@ int launcher_init(struct ipc_ept *ept)
 				       top + row * (tile_h + gap));
 
 			/* Button style */
-			lv_obj_set_style_bg_color(btn, lv_color_hex(0x16213e), 0);
-			lv_obj_set_style_border_color(btn, lv_color_hex(0x0f3460), 0);
+			lv_obj_set_style_bg_color(btn, lv_color_hex(UI_CARD), 0);
+			lv_obj_set_style_border_color(btn, lv_color_hex(UI_OUTLINE), 0);
 			lv_obj_set_style_border_width(btn, 2, 0);
 			lv_obj_set_style_radius(btn, 8, 0);
 
 			/* Button label */
 			lv_obj_t *label = lv_label_create(btn);
 			lv_label_set_text(label, app_list[i].name);
-			lv_obj_set_style_text_color(label, lv_color_hex(0xffffff), 0);
+			lv_obj_set_style_text_color(label, lv_color_hex(UI_TEXT), 0);
 			lv_obj_center(label);
 
 			/* Click event */
@@ -190,14 +191,14 @@ int launcher_init(struct ipc_ept *ept)
 		lv_label_set_text(no_apps,
 			"No apps found on SD card.\n"
 			"Insert SD with /apps/*.bin files.");
-		lv_obj_set_style_text_color(no_apps, lv_color_hex(0xaaaaaa), 0);
+		lv_obj_set_style_text_color(no_apps, lv_color_hex(UI_TEXT_MUTED), 0);
 		lv_obj_align(no_apps, LV_ALIGN_CENTER, 0, 0);
 	}
 
 	/* Status label at bottom */
 	status_label = lv_label_create(main_screen);
 	lv_label_set_text(status_label, "Ready");
-	lv_obj_set_style_text_color(status_label, lv_color_hex(0x53d769), 0);
+	lv_obj_set_style_text_color(status_label, lv_color_hex(UI_GREEN), 0);
 	lv_obj_align(status_label, LV_ALIGN_BOTTOM_MID, 0, -10);
 
 	LOG_INF("Launcher UI created");

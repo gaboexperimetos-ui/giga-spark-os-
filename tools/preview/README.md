@@ -82,8 +82,12 @@ El puente lee comandos por stdin y responde por stdout un fotograma crudo:
 | `M <x> <y>` | toque en coordenadas de pantalla (0–799, 0–479) |
 | `Q` | terminar |
 
-Respuesta: cabecera `<II` (pantalla, batería) + `800*480*2` = **768000** bytes
-RGB565 (768008 con cabecera).
+Respuesta: cabecera `<III` (pantalla, batería, retroiluminación 0–255) +
+`800*480*2` = **768000** bytes RGB565 (**768012** con cabecera).
+
+El tercer campo es el **brillo como retroiluminación**, no como contenido del
+panel: el servidor lo aplica al expandir a 8 bits por canal. Atenuar dentro del
+RGB565 recuantizaba tonos oscuros (solo 32/64 niveles) y el gris viraba a verde.
 El servidor HTTP traduce eso a `/frame.raw` y `/input`.
 
 ## Capturas de las 7 pantallas
@@ -108,6 +112,25 @@ verde y solo se vieron renderizando a PNG.
 esos estados; si mide el tiempo con `CLOCK_MONOTONIC` aparte, el botón pulsado se
 queda resaltado para siempre. Por eso inicializa `SDL_INIT_TIMER` y usa
 `SDL_GetTicks()`.
+
+## Interfaz Material Design 3
+
+El simulador usa **Roboto con antialiasing** (`simulator/roboto_font.h`, atlas de
+4 bits generado por `tools/ui/gen_font.py`) y componentes Material: superficies
+tonales, switches de pastilla, chips, slider y barra de navegación de 3 botones.
+La capa de dibujo está en `simulator/ui_material.c`.
+
+Roboto es de Google bajo SIL OFL 1.1; el texto de la licencia está en
+`simulator/fonts/OFL-Roboto.txt`. Regenerar el atlas (solo si cambia la UI):
+
+```bash
+pip install pillow                      # en un venv
+python3 tools/ui/gen_font.py --ttf Roboto-VF.ttf
+```
+
+El `.h` está versionado, así que compilar no necesita Pillow ni red. Si añades
+texto con caracteres nuevos, `tests/preview/test_font_coverage.py` falla hasta que
+los incluyas en `EXTRA` y regeneres: sin eso la UI muestra `?` en su lugar.
 
 ## Alcance
 

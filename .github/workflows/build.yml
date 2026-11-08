@@ -6,126 +6,192 @@ on:
   pull_request:
     branches: [master, main]
 
+# Cancela ejecuciones superseded de la misma rama/PR: ahorra minutos de CI.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Zephyr 4.5.0 (2026-10-28) declara SDK_VERSION 1.0.1 y exige Python >= 3.12.
+  ZEPHYR_SDK_VERSION: "1.0.1"
+  PYTHON_VERSION: "3.13"
+
 jobs:
   build-m7:
     name: Build M7 Firmware
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - name: Install Zephyr SDK
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install host dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             git cmake ninja-build gperf ccache \
-            dfu-util device-tree-compiler \
-            python3-pip python3-venv python3-setuptools \
-            gcc-arm-none-eabi libnewlib-arm-none-eabi
-          pip3 install west
-          west init -l .
-          west update
+            dfu-util device-tree-compiler libsdl2-dev
 
-      - name: Build M7
+      # El SDK de Zephyr trae su propio toolchain arm-zephyr-eabi. Antes se
+      # instalaba gcc-arm-none-eabi de apt, que NO es el toolchain que Zephyr
+      # espera y provoca fallos de enlace con picolibc.
+      - name: Install Zephyr SDK ${{ env.ZEPHYR_SDK_VERSION }}
         run: |
-          source ~/zephyr/zephyr-env.sh
-          west build -b arduino_giga_r1/stm32h747xx/m7
+          set -euo pipefail
+          base="https://github.com/zephyrproject-rtos/sdk-ng/releases/download/v${ZEPHYR_SDK_VERSION}"
+          wget -q "$base/zephyr-sdk-${ZEPHYR_SDK_VERSION}_linux-x86_64_minimal.tar.xz"
+          tar xf "zephyr-sdk-${ZEPHYR_SDK_VERSION}_linux-x86_64_minimal.tar.xz" -C "$HOME"
+          wget -q -O toolchain.tar.xz "$base/toolchain_gnu_linux-x86_64_arm-zephyr-eabi.tar.xz"
+          tar xf toolchain.tar.xz -C "$HOME/zephyr-sdk-${ZEPHYR_SDK_VERSION}"
+          "$HOME/zephyr-sdk-${ZEPHYR_SDK_VERSION}/setup.sh" -t arm-zephyr-eabi -c
+
+      # west init -l . requeria un west.yml que NO existia en el repo: estos
+      # jobs nunca pudieron pasar. El manifiesto ya esta versionado.
+      - name: Initialize west workspace
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip west
+          west init -l .
+          west update --narrow -o=--depth=1
+          west zephyr-export
+          pip install -r zephyr/scripts/requirements.txt
+
+      - name: Build M7 (sysbuild incluya el M4)
+        run: |
+          set -euo pipefail
+          west build -b arduino_giga_r1/stm32h747xx/m7 \
+            --shield arduino_giga_display_shield
 
       - name: Upload M7 binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: gigaspark-m7
-          path: build/zephyr/zephyr.bin
+          path: |
+            build/zephyr/zephyr.bin
+            build/zephyr/zephyr.elf
+          if-no-files-found: error
 
   build-m4:
     name: Build M4 Firmware
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - name: Install Zephyr SDK
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install host dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             git cmake ninja-build gperf ccache \
-            dfu-util device-tree-compiler \
-            python3-pip python3-venv python3-setuptools \
-            gcc-arm-none-eabi libnewlib-arm-none-eabi
-          pip3 install west
+            dfu-util device-tree-compiler libsdl2-dev
+
+      - name: Install Zephyr SDK ${{ env.ZEPHYR_SDK_VERSION }}
+        run: |
+          set -euo pipefail
+          base="https://github.com/zephyrproject-rtos/sdk-ng/releases/download/v${ZEPHYR_SDK_VERSION}"
+          wget -q "$base/zephyr-sdk-${ZEPHYR_SDK_VERSION}_linux-x86_64_minimal.tar.xz"
+          tar xf "zephyr-sdk-${ZEPHYR_SDK_VERSION}_linux-x86_64_minimal.tar.xz" -C "$HOME"
+          wget -q -O toolchain.tar.xz "$base/toolchain_gnu_linux-x86_64_arm-zephyr-eabi.tar.xz"
+          tar xf toolchain.tar.xz -C "$HOME/zephyr-sdk-${ZEPHYR_SDK_VERSION}"
+          "$HOME/zephyr-sdk-${ZEPHYR_SDK_VERSION}/setup.sh" -t arm-zephyr-eabi -c
+
+      - name: Initialize west workspace
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip west
           west init -l .
-          west update
+          west update --narrow -o=--depth=1
+          west zephyr-export
+          pip install -r zephyr/scripts/requirements.txt
 
       - name: Build M4
         run: |
-          source ~/zephyr/zephyr-env.sh
-          west build -b arduino_giga_r1/stm32h747xx/m4
+          set -euo pipefail
+          west build -b arduino_giga_r1/stm32h747xx/m4 m4
 
       - name: Upload M4 binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: gigaspark-m4
-          path: build/zephyr/zephyr.bin
+          path: |
+            build/zephyr/zephyr.bin
+            build/zephyr/zephyr.elf
+          if-no-files-found: error
 
   test:
     name: Unit Tests (native_sim)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - name: Install Zephyr SDK
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install host dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            git cmake ninja-build gperf ccache \
-            python3-pip python3-venv python3-setuptools
-          pip3 install west
+            git cmake ninja-build gperf ccache gcc-multilib
+
+      - name: Initialize west workspace
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip west
           west init -l .
-          west update
+          west update --narrow -o=--depth=1
+          west zephyr-export
+          pip install -r zephyr/scripts/requirements.txt
 
       - name: Run Buddy Allocator tests
         run: |
-          source ~/zephyr/zephyr-env.sh
-          rm -rf build_test_buddy
-          west build -b native_sim --build-dir build_test_buddy tests/unit/mem_engine
+          set -euo pipefail
+          west build -b native_sim/native/64 --build-dir build_test_buddy tests/unit/mem_engine
           ./build_test_buddy/zephyr/zephyr.exe
 
       - name: Run zRAM LRU tests
         run: |
-          source ~/zephyr/zephyr-env.sh
-          rm -rf build_test_zram
-          west build -b native_sim --build-dir build_test_zram tests/unit/zram_comp
+          set -euo pipefail
+          west build -b native_sim/native/64 --build-dir build_test_zram tests/unit/zram_comp
           ./build_test_zram/zephyr/zephyr.exe
 
   build-simulator:
-    name: Build Simulator (SDL2)
+    name: Build Simulator (Makefile)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
+      - uses: actions/checkout@v7
       - name: Install SDL2
         run: |
           sudo apt-get update
           sudo apt-get install -y libsdl2-dev gcc make pkg-config
-
       - name: Build Simulator
-        run: |
-          cd simulator
-          make
-
+        run: make -C simulator
       - name: Verify binary
-        run: |
-          file simulator/gigaspark_sim
+        run: file simulator/gigaspark_sim
 
   host-checks:
     name: Host Tests + Sanitizers
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
       - name: Install native dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends cmake ninja-build gcc libsdl2-dev pkg-config
+      # Un directorio por invocacion: `cmake --build a b` NO es valido, devuelve
+      # "Unknown argument b" con exit 1. Sin `set -e` el paso seguia y ctest
+      # corria el binario anterior, dando verdes falsos.
       - name: Release tests and simulator smoke test
         run: |
+          set -euo pipefail
           cmake -S tests/host -B build_host -G Ninja -DCMAKE_BUILD_TYPE=Release
           cmake --build build_host --parallel 2
           ctest --test-dir build_host --output-on-failure
@@ -134,6 +200,74 @@ jobs:
           ctest --test-dir build_simulator --output-on-failure
       - name: Address and undefined behavior sanitizers
         run: |
+          set -euo pipefail
           cmake -S tests/host -B build_host_san -G Ninja -DCMAKE_BUILD_TYPE=Debug -DGIGASPARK_SANITIZE=ON
           cmake --build build_host_san --parallel 2
-          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 ctest --test-dir build_host_san --output-on-failure
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 \
+            ctest --test-dir build_host_san --output-on-failure
+      - name: Preview color fidelity and font coverage
+        run: |
+          set -euo pipefail
+          # RGB565: la expansion a 24 bits debe ser biyectiva o el preview
+          # muestra un color distinto al del panel. Cobertura de fuente: un
+          # glifo ausente se dibuja como '?' silenciosamente.
+          python -m unittest discover -s tests/preview -v
+      - name: Preview bridge smoke test
+        run: |
+          set -euo pipefail
+          bash tools/preview/build.sh
+
+  # El simulador soporta SDL3 (actual) y SDL2 (paquete del sistema en LTS).
+  # Sin este job la ruta de respaldo se podria romper sin que nadie lo note.
+  sdl-matrix:
+    name: SDL${{ matrix.sdl }} compatibility
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        sdl: [2, 3]
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install SDL${{ matrix.sdl }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build gcc pkg-config libsdl2-dev
+          if [ "${{ matrix.sdl }}" = "3" ]; then
+            # SDL3 no esta en los repos de Ubuntu LTS: se construye el tag
+            # publicado. UNIX_CONSOLE_BUILD porque el runner no tiene display.
+            git clone --depth 1 --branch release-3.4.20 \
+              https://github.com/libsdl-org/SDL.git /tmp/SDL3
+            cmake -S /tmp/SDL3 -B /tmp/SDL3-build -G Ninja \
+              -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/tmp/sdl3 \
+              -DSDL_SHARED=OFF -DSDL_STATIC=ON -DSDL_TESTS=OFF \
+              -DSDL_EXAMPLES=OFF -DSDL_UNIX_CONSOLE_BUILD=ON
+            cmake --build /tmp/SDL3-build --parallel 2
+            cmake --install /tmp/SDL3-build
+          fi
+      - name: Build and test against SDL${{ matrix.sdl }}
+        run: |
+          set -euo pipefail
+          extra=""
+          if [ "${{ matrix.sdl }}" = "3" ]; then
+            extra="-DCMAKE_PREFIX_PATH=/tmp/sdl3"
+          else
+            extra="-DGIGA_FORCE_SDL2=ON"
+          fi
+          cmake -S simulator -B build_sim -G Ninja -DCMAKE_BUILD_TYPE=Release $extra
+          cmake --build build_sim --parallel 2
+          SDL_VIDEODRIVER=dummy SDL_VIDEO_DRIVER=dummy \
+            ctest --test-dir build_sim --output-on-failure
+          cmake -S tests/host -B build_h -G Ninja -DCMAKE_BUILD_TYPE=Release $extra
+          cmake --build build_h --parallel 2
+          SDL_VIDEODRIVER=dummy SDL_VIDEO_DRIVER=dummy \
+            ctest --test-dir build_h --output-on-failure
+      - name: Bridge smoke test (SDL${{ matrix.sdl }})
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.sdl }}" = "3" ]; then
+            SDL3_PREFIX=/tmp/sdl3 bash tools/preview/build.sh
+          else
+            bash tools/preview/build.sh
+          fi

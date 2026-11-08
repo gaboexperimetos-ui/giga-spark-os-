@@ -16,13 +16,6 @@ static int failures;
 	if (!(cond)) { fprintf(stderr, "FALLO: %s\n", msg); failures++; } \
 } while (0)
 
-/* Renderiza y devuelve la accion registrada bajo un punto, como haria el dedo. */
-static int act_at(int screen, int x, int y)
-{
-	render_screen(screen, 1000, 100);
-	return hit_test(x, y);
-}
-
 static bool tap(int screen, int x, int y, int *cur)
 {
 	render_screen(screen, 1000, 100);
@@ -162,8 +155,10 @@ static void test_settings_switches(void)
 
 	/* Con WiFi apagado, la pantalla de WiFi debe decirlo, no listar redes. */
 	render_screen(4, 1000, 100);
-	CHECK(hit_test(CX + PAD + 40, CY + PAD + 140) == A_NONE,
-	      "con WiFi apagado siguen activos los toques de red");
+	bool has_net = false;
+	for (int i = 0; i < nhits; i++)
+		if (hits[i].act >= A_WF_NET && hits[i].act < A_WF_NET + N_WF_NETS) has_net = true;
+	CHECK(!has_net, "con WiFi apagado siguen activos los toques de red");
 
 	render_screen(5, 1000, 100);
 	center_of(A_ST_WIFI, &x, &y);
@@ -198,8 +193,9 @@ static void test_wifi_pagination_and_selection(void)
 	render_screen(4, 1000, 100);
 
 	/* En la pagina 0 la flecha atras no debe existir como objetivo. */
-	CHECK(act_at(4, CX + PAD + 40, CY + PAD + 40) == A_NONE,
-	      "flecha atras activa en la primera pagina");
+	bool has_prev = false;
+	for (int i = 0; i < nhits; i++) if (hits[i].act == A_WF_PREV) has_prev = true;
+	CHECK(!has_prev, "flecha atras activa en la primera pagina");
 
 	CHECK(center_of(A_WF_NEXT, &x, &y), "flecha adelante no registrada");
 	tap(4, x, y, &cur);
@@ -238,7 +234,7 @@ static void test_rf_modes_and_presets(void)
 	fl_mode = 0; rf_freq = 1; rf_scan = false;
 }
 
-static void test_rail_navigation(void)
+static void test_nav_bar_navigation(void)
 {
 	int cur = 4, x = 0, y = 0;
 	render_screen(4, 1000, 100);
@@ -247,8 +243,10 @@ static void test_rail_navigation(void)
 	CHECK(cur == 0, "HOME no vuelve al launcher");
 
 	render_screen(0, 1000, 100);
-	CHECK(act_at(0, RAIL_W / 2, BAR_H + 20) == A_NONE,
-	      "ATRAS activo en el launcher, no deberia");
+	/* En el launcher no hay nada detras: ATRAS no debe registrar zona. */
+	bool has_back = false;
+	for (int i = 0; i < nhits; i++) if (hits[i].act == A_BACK) has_back = true;
+	CHECK(!has_back, "ATRAS activo en el launcher, no deberia");
 
 	render_screen(2, 1000, 100);
 	CHECK(center_of(A_BACK, &x, &y), "ATRAS no registrado dentro de una app");
@@ -271,19 +269,27 @@ static void test_quick_settings_overlay(void)
 	CHECK(!qs_open, "el overlay no cierra");
 }
 
-static void test_brightness_stays_rgb565(void)
+static void test_backlight_does_not_touch_framebuffer(void)
 {
+	/* El brillo es la retroiluminacion (PWM), no contenido del panel.
+	 * Atenuar dentro del RGB565 recuantizaba tonos oscuros y el gris viraba
+	 * a verde, asi que el framebuffer debe ser IDENTICO a cualquier brillo
+	 * y el factor viaja aparte para aplicarlo con 8 bits por canal. */
 	int save = st_br;
-	st_br = 20;
-	render_screen(0, 1000, 100);
-	/* Cualquier uint16_t es RGB565 valido; se verifica que el brillo oscurece. */
-	uint32_t dark = 0;
-	for (size_t i = 0; i < sizeof(fb) / sizeof(fb[0]); i++) dark += fb[i] >> 11;
 	st_br = 100;
 	render_screen(0, 1000, 100);
-	uint32_t bright = 0;
-	for (size_t i = 0; i < sizeof(fb) / sizeof(fb[0]); i++) bright += fb[i] >> 11;
-	CHECK(dark < bright, "el brillo no atenua la imagen");
+	uint8_t full = backlight_scale();
+	static uint16_t ref[SCR_W * SCR_H];
+	memcpy(ref, fb, sizeof(ref));
+
+	st_br = 20;
+	render_screen(0, 1000, 100);
+	uint8_t dim = backlight_scale();
+	CHECK(memcmp(ref, fb, sizeof(ref)) == 0,
+	      "el brillo modifico el framebuffer; debe ser retroiluminacion");
+	CHECK(dim < full, "bajar el brillo no reduce el factor de retroiluminacion");
+	CHECK(full == 255, "a brillo maximo la retroiluminacion debe ser 255");
+	CHECK(dim > 0, "la pantalla no debe quedar completamente negra");
 	st_br = save;
 }
 
@@ -297,9 +303,9 @@ int main(void)
 	test_settings_switches();
 	test_wifi_pagination_and_selection();
 	test_rf_modes_and_presets();
-	test_rail_navigation();
+	test_nav_bar_navigation();
 	test_quick_settings_overlay();
-	test_brightness_stays_rgb565();
+	test_backlight_does_not_touch_framebuffer();
 	if (failures) {
 		fprintf(stderr, "\n%d comprobaciones fallaron\n", failures);
 		return 1;

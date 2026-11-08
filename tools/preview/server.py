@@ -65,7 +65,12 @@ const ctx = canvas.getContext('2d');
 const statusEl = document.getElementById('status');
 const names = ['Launcher','Osciloscopio','Fuente de poder','Flipper RF','WiFi Scanner','Ajustes','Acerca de'];
 const keymap = { Escape:27, Enter:13, ArrowUp:1073741906, ArrowDown:1073741907, '1':49,'2':50,'3':51,'4':52,'5':53,'6':54 };
-let screen = 0, battery = 100, busy = false, lastDraw = 0, lastStatic = 0;
+let screen = 0, battery = 100, backlight = 255, busy = false, lastDraw = 0, lastStatic = 0;
+
+// Brillo = retroiluminacion (PWM): escala la luz emitida, no el contenido
+// del panel. Se aplica AQUI, con 8 bits por canal. Dentro del RGB565 solo
+// hay 32/64 niveles y recuantizar tonos oscuros viraba el gris a verde.
+function backlightScale(v) { return (v * backlight + 127) / 255 | 0; }
 
 function draw(buf) {
   const px = new Uint16Array(buf);
@@ -74,9 +79,12 @@ function draw(buf) {
   for (let i = 0, j = 0; i < px.length; i++, j += 4) {
     const c = px[i];
     const r = (c >> 11) & 31, g = (c >> 5) & 63, b = c & 31;
-    d[j] = (r << 3) | (r >> 2);
-    d[j+1] = (g << 2) | (g >> 2);
-    d[j+2] = (b << 3) | (b >> 2);
+    d[j] = backlightScale((r << 3) | (r >> 2));
+    // 6->8 bits: replicar los 2 bits altos, no los 4 bajos. Con (g>>2)
+    // 28 de los 64 verdes no volvian a su valor RGB565 y el preview mostraba
+    // un color distinto al del panel real.
+    d[j+1] = backlightScale((g << 2) | (g >> 4));
+    d[j+2] = backlightScale((b << 3) | (b >> 2));
     d[j+3] = 255;
   }
   ctx.putImageData(img, 0, 0);
@@ -84,6 +92,7 @@ function draw(buf) {
 function meta(r) {
   screen = Number(r.headers.get('X-Giga-Screen') || 0);
   battery = Number(r.headers.get('X-Giga-Battery') || 100);
+  backlight = Number(r.headers.get('X-Giga-Backlight') || 255);
   statusEl.textContent = `${names[screen] || 'Pantalla'} · batería ${battery}% · ${screen===1||screen===3 ? 'animación en vivo' : 'entrada táctil activa'}`;
 }
 async function pull() {
@@ -156,9 +165,9 @@ class Bridge:
         with self.lock:
             self.proc.stdin.write((line + "\n").encode())
             self.proc.stdin.flush()
-            header = self._read_exact(8)
-            screen, battery = struct.unpack("<II", header)
-            return screen, battery, self._read_exact(FRAME_BYTES)
+            header = self._read_exact(12)
+            screen, battery, backlight = struct.unpack("<III", header)
+            return screen, battery, backlight, self._read_exact(FRAME_BYTES)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -179,12 +188,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def _frame(self, line):
         try:
-            screen, battery, raw = self.bridge.command(line)
+            screen, battery, backlight, raw = self.bridge.command(line)
         except Exception as exc:
             self._send(503, "text/plain; charset=utf-8", str(exc).encode())
             return
         self._send(200, "application/octet-stream", raw,
-                   {"X-Giga-Screen": screen, "X-Giga-Battery": battery})
+                   {"X-Giga-Screen": screen, "X-Giga-Battery": battery,
+                    "X-Giga-Backlight": backlight})
 
     def do_GET(self):
         if self.path == "/" or self.path.startswith("/index.html"):
