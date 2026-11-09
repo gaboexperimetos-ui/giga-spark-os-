@@ -27,6 +27,12 @@
 #define UI_TICKS() gsp_ticks()
 #include "../common/ui_os.c"
 
+/* Cursor de la pantalla de Ajustes para navegacion por teclado. Vive aqui y no
+ * en el nucleo porque solo existe en el backend de escritorio: en la placa la
+ * entrada es el dedo. Estaba en el nucleo y el M7, que no tiene teclado,
+ * abortaba con -Werror=unused-variable. */
+static int st_sel;
+
 static bool handle_event(const SDL_Event *ev, int *screen, bool *run) {
 	/* SDL2 agrupaba los eventos de ventana en SDL_WINDOWEVENT; SDL3 emite
 	 * uno por caso. gsp_window_needs_redraw() abstrae la diferencia. */

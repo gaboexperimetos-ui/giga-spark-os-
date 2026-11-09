@@ -605,7 +605,6 @@ static void app_wifi(uint32_t t, uint8_t bat) {
 static bool st_sound = true;
 static int st_sleep = 1;
 static const int st_sleeps[] = { 15, 30, 60, 0 };
-static int st_sel;
 
 static void app_set(uint32_t t, uint8_t bat) {
 	chrome(t, bat, 5);
