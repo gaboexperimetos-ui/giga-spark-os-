@@ -8,9 +8,10 @@
 # Se importa el manifiesto de Zephyr para arrastrar sus modulos (HAL de ST,
 # open-amp, libmetal y LVGL) en las revisiones que esa version prueba en conjunto.
 #
-# IMPORTANTE sobre LVGL: no se fija aqui una version propia. Zephyr arrastra su
-# propio pin de LVGL (modules/lib/gui/lvgl) y sobrescribirlo rompe la integracion
-# de drivers de display. La version efectiva es la que traiga este manifiesto.
+# LVGL NO se importa: la interfaz se dibuja con un render propio en RGB565
+# (common/ui_os.c + ui_material.c), que es el mismo codigo en el simulador y en
+# la placa. Antes lo usaba m7/src/ui_manager.c, que era codigo muerto sin
+# compilar y mezclaba API de LVGL v8 y v9; se elimino.
 #
 # SDK: Zephyr 4.5.0 declara SDK_VERSION 1.0.1 (ver fichero SDK_VERSION del repo).
 # Python: Zephyr 4.5.0 exige >= 3.12 (cmake/modules/python.cmake).
@@ -57,7 +58,6 @@ manifest:
           # fatfs lo necesita el M4 (CONFIG_FAT_FILESYSTEM_ELM). Tambien
           # faltaba: habria sido el siguiente fallo despues de cmsis_6.
           - fatfs
-          - lvgl
           - mbedtls
           - picolibc
 
