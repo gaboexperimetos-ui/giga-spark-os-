@@ -1,0 +1,50 @@
+# Normalizacion de finales de linea.
+#
+# El panel y el toolchain se desarrollan en Linux; un CRLF colado en un .c
+# rompe los scripts de build y ensucia los diffs. `text=auto` normaliza a LF
+# en el repo y deja que Windows haga checkout en su formato si quiere.
+* text=auto eol=lf
+
+# Fuentes: texto explicito, siempre LF.
+*.c      text eol=lf
+*.h      text eol=lf
+*.py     text eol=lf
+*.sh     text eol=lf
+*.cmake  text eol=lf
+*.yml    text eol=lf
+*.yaml   text eol=lf
+*.md     text eol=lf
+*.conf   text eol=lf
+*.overlay text eol=lf
+CMakeLists.txt text eol=lf
+Makefile text eol=lf
+
+# Binarios: no normalizar ni intentar diff de texto.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.ttf  binary
+*.otf  binary
+*.woff2 binary
+*.bin  binary
+*.elf  binary
+*.pdf  binary
+*.kicad_pcb binary
+
+# Atlas de fuente generado por tools/ui/gen_font.py.
+# - linguist-generated: GitHub lo colapsa en los diffs y no lo cuenta como
+#   lenguaje del repo (son 6400 lineas de bytes, no codigo escrito a mano).
+# - -diff: un diff de 400 KB de numeros no aporta nada en revision.
+simulator/roboto_font.h linguist-generated=true -diff
+
+# Licencia de la fuente: texto legal, no linguist lo detecta como tal.
+simulator/fonts/OFL-Roboto.txt linguist-documentation=true
+
+# Documentacion fuera de las estadisticas de lenguaje.
+docs/** linguist-documentation=true
+*.md    linguist-documentation=true
+
+# Scripts de build no son "Shell del proyecto" en las estadisticas.
+tools/preview/bootstrap.sh linguist-vendored=true

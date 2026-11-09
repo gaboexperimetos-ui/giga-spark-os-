@@ -1,0 +1,66 @@
+# EditorConfig — https://editorconfig.org
+#
+# La indentacion no es arbitraria: el C del proyecto usa TABS (verificado en
+# simulator/main.c, m7/src/*.c y common/*.h). Un editor que inserte espacios
+# produce diffs enormes y rompe la alineacion de los comentarios.
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+# C y cabeceras: tabs, como el resto del arbol.
+[*.{c,h}]
+indent_style = tab
+indent_size = 4
+
+[CMakeLists.txt]
+indent_style = space
+indent_size = 2
+
+[*.cmake]
+indent_style = space
+indent_size = 2
+
+# Zephyr/Kconfig usa tabs.
+[{Kconfig*,*.conf,*.overlay,*.dts,*.dtsi}]
+indent_style = tab
+
+[*.{yml,yaml}]
+indent_style = space
+indent_size = 2
+
+[*.{py}]
+indent_style = space
+indent_size = 4
+
+[*.{sh,bash}]
+indent_style = space
+indent_size = 2
+
+[*.{js,html,css}]
+indent_style = space
+indent_size = 2
+
+[*.md]
+indent_style = space
+indent_size = 2
+# En Markdown dos espacios al final significan salto de linea: no recortar.
+trim_trailing_whitespace = false
+
+[Makefile]
+indent_style = tab
+
+# Atlas de fuente generado por tools/ui/gen_font.py: no reformatear a mano.
+# `unset` es el valor de la spec para "sin preferencia"; `ignore` no existe y
+# los editores lo descartan en silencio.
+[simulator/roboto_font.h]
+indent_style = unset
+indent_size = unset
+trim_trailing_whitespace = false
+insert_final_newline = unset

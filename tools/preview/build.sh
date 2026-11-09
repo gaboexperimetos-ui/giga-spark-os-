@@ -79,8 +79,14 @@ EOF
 fi
 echo "Puente usando SDL$SDL_MAJOR"
 
+# El valor se calcula antes: una sustitucion de comando sin comillas dentro de
+# un argumento dispara SC2046 (word splitting). Asi queda citado y claro.
+if [ "$SDL_MAJOR" = 3 ]; then SDL_DEFINE=1; else SDL_DEFINE=0; fi
+
+# SC2086: $SDL_CFLAGS y $SDL_LIBS son listas de flags que DEBEN separarse en
+# palabras; entrecomillarlas pasaria un unico argumento invalido al compilador.
 # shellcheck disable=SC2086
-gcc "${CFLAGS_EXTRA[@]}" -DGSP_USE_SDL3=$([ "$SDL_MAJOR" = 3 ] && echo 1 || echo 0) \
+gcc "${CFLAGS_EXTRA[@]}" "-DGSP_USE_SDL3=$SDL_DEFINE" \
     -I"$INC_PARENT" -I"$ROOT/common/include" -I"$ROOT/simulator" $SDL_CFLAGS \
     "$HERE/bridge.c" -o "$OUT/bridge" $SDL_LIBS -lm
 

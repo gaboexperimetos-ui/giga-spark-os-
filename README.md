@@ -2,12 +2,12 @@
 
 > **Un sistema operativo dual-core que convierte al Arduino Giga R1 en una navaja suiza de la ingeniería.**
 
+[![CI](https://github.com/gaboexperimetos-ui/giga-spark-os-/actions/workflows/build.yml/badge.svg)](https://github.com/gaboexperimetos-ui/giga-spark-os-/actions/workflows/build.yml)
+[![License: MIT](https://img.shields.io/github/license/gaboexperimetos-ui/giga-spark-os-)](LICENSE)
 ![STM32H747](https://img.shields.io/badge/STM32H747-Dual--Core-blue)
-![Zephyr RTOS](https://img.shields.io/badge/Zephyr-RTOS-4.4.1-green)
-![C99](https://img.shields.io/badge/Language-C99-blue)
-![License](https://img.shields.io/badge/License-MIT-yellow)
-![Version](https://img.shields.io/badge/Version-1.0-red)
-![Build](https://img.shields.io/badge/Build-Passing-brightgreen)
+![Zephyr RTOS](https://img.shields.io/badge/Zephyr-4.5.0-green)
+![C11](https://img.shields.io/badge/Language-C11-blue)
+![SDL](https://img.shields.io/badge/SDL-3.4.20-orange)
 
 ---
 
@@ -237,9 +237,7 @@ El diseño del PCB esta en `hardware/Gigaspark_Mega/`. Ver [HARDWARE.md](HARDWAR
 | RAM M7 | 125 KB / 512 KB (24%) |
 | Flash M4 | 61 KB |
 | RAM M4 | 40 KB (31%) |
-| Tests | 4 suites de host + smoke + 9 de preview (ver `docs/VERSIONS.md`) |
-| Commits | 23 |
-| Phases | 22 completadas |
+| Tests | 4 suites de host + smoke del simulador + 15 de preview |
 
 ---
 
@@ -251,9 +249,8 @@ El diseño del PCB esta en `hardware/Gigaspark_Mega/`. Ver [HARDWARE.md](HARDWAR
 - **MCU:** STM32H747XI (Cortex-M7 480MHz + M4 240MHz)
 - **GUI:** LVGL — la revisión que arrastra el manifiesto de Zephyr 4.5.0
 - **IPC:** OpenAMP/RPMsg
-- **Simulador:** SDL2 nativo (sin dependencias Zephyr)
 - **Hardware Design:** KiCad 10.0.6
-- **Lenguaje:** C puro (C99/C11)
+- **Lenguaje:** C puro (C11)
 - **CI/CD:** GitHub Actions
 
 ---
