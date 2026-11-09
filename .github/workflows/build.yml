@@ -29,7 +29,7 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Install linters
-        run: python -m pip install --upgrade pip shellcheck-py yamllint
+        run: python -m pip install --upgrade pip shellcheck-py yamllint pyyaml
       - name: ShellCheck
         run: |
           set -euo pipefail
@@ -48,6 +48,12 @@ jobs:
                    tools/preview/bootstrap.sh tools/ci/annotate.sh; do
             bash -n "$f"
           done
+      # Un nombre de modulo inexistente en el allowlist no da error: west lo
+      # ignora en silencio y el sintoma aparece luego como un header que falta
+      # (paso con cmsis_6). Verificarlo aqui cuesta segundos; descubrirlo en el
+      # job de firmware cuesta un workspace entero de Zephyr.
+      - name: Validate west manifest allowlist
+        run: python tools/ci/check_manifest.py
 
   build-m7:
     name: Build M7 Firmware

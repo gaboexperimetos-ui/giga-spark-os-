@@ -36,12 +36,27 @@ manifest:
         # Solo los modulos que este proyecto usa. Importar todo el manifiesto
         # de Zephyr descarga decenas de HALs de otros fabricantes (>1 GB) y
         # alarga mucho el CI sin aportar nada a un STM32H747.
+        # Cada nombre tiene que existir TAL CUAL en el west.yml de Zephyr
+        # v4.5.0. tools/ci/check_manifest.py lo verifica en el job de lint:
+        # un nombre inexistente se ignora en silencio y el sintoma aparece
+        # mucho despues, como un header que no se encuentra.
         name-allowlist:
+          # CMSIS son DOS proyectos distintos, no variantes del mismo:
+          #   cmsis_6 -> modules/cmsis_6/cmsis_core.h, el de Cortex-M
+          #   cmsis   -> el de Cortex-A/R
+          # Faltaba cmsis_6 y el M7 y el M4 morian con
+          # "fatal error: cmsis_core.h: No such file or directory", porque
+          # modules/cmsis_6/CMakeLists.txt solo agrega el include si el
+          # proyecto esta en el workspace.
+          - cmsis_6
           - cmsis
-          - cmsis-dsp
           - hal_stm32
+          # open-amp + libmetal: IPC_SERVICE entre el M7 y el M4.
           - open-amp
           - libmetal
+          # fatfs lo necesita el M4 (CONFIG_FAT_FILESYSTEM_ELM). Tambien
+          # faltaba: habria sido el siguiente fallo despues de cmsis_6.
+          - fatfs
           - lvgl
           - mbedtls
           - picolibc
