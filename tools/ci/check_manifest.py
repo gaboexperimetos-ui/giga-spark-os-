@@ -28,6 +28,7 @@ inexistentes, 0 si todos son validos.
 
 from __future__ import annotations
 
+import os
 import sys
 import urllib.error
 import urllib.request
@@ -45,6 +46,11 @@ API = "https://api.github.com/repos"
 
 def http_get(url: str, raw: bool = False) -> bytes:
     headers = {"User-Agent": "gigaspark-manifest-check"}
+    # El limite anonimo de la API es 60 peticiones/hora por IP, y los runners
+    # comparten IP. Con token son 1000/hora y el check deja de ser flaky.
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     headers["Accept"] = (
         "application/vnd.github.raw" if raw else "application/vnd.github+json"
     )
@@ -76,6 +82,12 @@ def main() -> int:
         upstream = yaml.safe_load(http_get(url, raw=True))
     except urllib.error.HTTPError as exc:
         print(f"No se pudo leer el manifiesto de Zephyr: {exc}", file=sys.stderr)
+        if exc.code in (403, 429):
+            print(
+                "Probable limite de la API. Define GITHUB_TOKEN para subir de"
+                " 60 a 1000 peticiones/hora.",
+                file=sys.stderr,
+            )
         return 2
 
     projects = {p["name"]: p for p in upstream["manifest"]["projects"]}

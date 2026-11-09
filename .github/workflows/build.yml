@@ -53,6 +53,10 @@ jobs:
       # (paso con cmsis_6). Verificarlo aqui cuesta segundos; descubrirlo en el
       # job de firmware cuesta un workspace entero de Zephyr.
       - name: Validate west manifest allowlist
+        env:
+          # Sin token la API de GitHub limita a 60 peticiones/hora por IP y el
+          # runner comparte IP: el check fallaba con HTTP 403 sin ser un bug.
+          GITHUB_TOKEN: ${{ github.token }}
         run: python tools/ci/check_manifest.py
 
   build-m7:
@@ -68,9 +72,14 @@ jobs:
       - name: Install host dependencies
         run: |
           sudo apt-get update
+          # libusb/libudev: los requirements de Zephyr incluyen hidapi, que
+          # no publica wheel para Python 3.15 y pip lo compila desde fuente.
+          # Sin estas cabeceras falla con "pkg-config package 'libusb-1.0
+          # >= 1.0.9' not found".
           sudo apt-get install -y --no-install-recommends \
             git cmake ninja-build gperf ccache \
-            dfu-util device-tree-compiler libsdl2-dev
+            dfu-util device-tree-compiler libsdl2-dev \
+            pkg-config libusb-1.0-0-dev libudev-dev
 
       # El SDK de Zephyr trae su propio toolchain arm-zephyr-eabi. Antes se
       # instalaba gcc-arm-none-eabi de apt, que NO es el toolchain que Zephyr
@@ -139,7 +148,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             git cmake ninja-build gperf ccache \
-            dfu-util device-tree-compiler libsdl2-dev
+            dfu-util device-tree-compiler libsdl2-dev \
+            pkg-config libusb-1.0-0-dev libudev-dev
 
       - name: Install Zephyr SDK ${{ env.ZEPHYR_SDK_VERSION }}
         run: |
@@ -206,7 +216,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            git cmake ninja-build gperf ccache gcc-multilib
+            git cmake ninja-build gperf ccache gcc-multilib \
+            pkg-config libusb-1.0-0-dev libudev-dev
 
       # Cada comando va por separado y con annotate.sh: los logs completos se
       # descargan de un blob de Azure que no siempre es alcanzable, pero las
