@@ -43,9 +43,11 @@ fi
 "$CMAKE" --version | head -1
 
 # --- 2. SDL3 estatico (version actual) --------------------------------------
-# SDL_UNIX_CONSOLE_BUILD=ON: este entorno no tiene X11/Wayland y SDL3 aborta la
-# configuracion si no encuentra ninguno. El preview es headless (renderiza a un
-# framebuffer y lo sirve por HTTP), asi que no necesita driver de ventana.
+# El preview es headless (renderiza a un framebuffer y lo sirve por HTTP), asi
+# que no necesita driver de ventana. Se desactivan X11 y Wayland de forma
+# explicita: UNIX_CONSOLE_BUILD=ON solo no basta. Si la maquina tiene X11
+# parcial, SDL3 lo detecta y aborta por falta de XTEST; en CI paso exactamente
+# eso. Con los tres flags el resultado no depende de lo que traiga el sistema.
 if [ -f "$PREFIX3/lib/libSDL3.a" ] && [ -f "$PREFIX3/include/SDL3/SDL.h" ]; then
   echo "[2/4] SDL3 ya instalado en $PREFIX3"
 else
@@ -66,7 +68,7 @@ else
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX="$PREFIX3" \
     -DSDL_SHARED=OFF -DSDL_STATIC=ON -DSDL_TESTS=OFF -DSDL_EXAMPLES=OFF \
-    -DSDL_UNIX_CONSOLE_BUILD=ON \
+    -DSDL_UNIX_CONSOLE_BUILD=ON -DSDL_X11=OFF -DSDL_WAYLAND=OFF \
     > "$DEPS/configure3.log" 2>&1 || { tail -30 "$DEPS/configure3.log"; exit 1; }
   "$CMAKE" --build "$DEPS/SDL3-build" --parallel "$JOBS" \
     > "$DEPS/build3.log" 2>&1 || { tail -30 "$DEPS/build3.log"; exit 1; }

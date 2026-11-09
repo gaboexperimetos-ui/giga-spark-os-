@@ -56,8 +56,9 @@ python3 tools/preview/server.py --port 8080
 pip install west
 west init -l .
 west update
-west zephyr-export
+# requirements ANTES de zephyr-export: export importa jsonschema y pyelftools.
 pip install -r zephyr/scripts/requirements.txt
+west zephyr-export
 west build -b arduino_giga_r1/stm32h747xx/m7 --shield arduino_giga_display_shield
 ```
 

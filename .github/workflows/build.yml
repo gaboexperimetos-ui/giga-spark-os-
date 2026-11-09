@@ -92,8 +92,11 @@ jobs:
           $A "pip install west" python -m pip install --upgrade pip west
           $A "west init" west init -l .
           $A "west update" west update --narrow -o=--depth=1
-          $A "west zephyr-export" west zephyr-export
+          # requirements ANTES de zephyr-export: export importa jsonschema y
+          # pyelftools, que vienen de aqui. En el orden anterior fallaba con
+          # "ModuleNotFoundError: No module named 'jsonschema'".
           $A "pip requirements" pip install -r zephyr/scripts/requirements.txt
+          $A "west zephyr-export" west zephyr-export
 
       - name: Build M7 (sysbuild incluya el M4)
         run: |
@@ -148,8 +151,11 @@ jobs:
           $A "pip install west" python -m pip install --upgrade pip west
           $A "west init" west init -l .
           $A "west update" west update --narrow -o=--depth=1
-          $A "west zephyr-export" west zephyr-export
+          # requirements ANTES de zephyr-export: export importa jsonschema y
+          # pyelftools, que vienen de aqui. En el orden anterior fallaba con
+          # "ModuleNotFoundError: No module named 'jsonschema'".
           $A "pip requirements" pip install -r zephyr/scripts/requirements.txt
+          $A "west zephyr-export" west zephyr-export
 
       - name: Build M4
         run: |
@@ -192,8 +198,11 @@ jobs:
           $A "pip install west" python -m pip install --upgrade pip west
           $A "west init" west init -l .
           $A "west update" west update --narrow -o=--depth=1
-          $A "west zephyr-export" west zephyr-export
+          # requirements ANTES de zephyr-export: export importa jsonschema y
+          # pyelftools, que vienen de aqui. En el orden anterior fallaba con
+          # "ModuleNotFoundError: No module named 'jsonschema'".
           $A "pip requirements" pip install -r zephyr/scripts/requirements.txt
+          $A "west zephyr-export" west zephyr-export
 
       - name: Run Buddy Allocator tests
         run: |
@@ -300,14 +309,17 @@ jobs:
             cmake ninja-build gcc pkg-config libsdl2-dev
           if [ "${{ matrix.sdl }}" = "3" ]; then
             # SDL3 no esta en los repos de Ubuntu LTS: se construye el tag
-            # publicado. UNIX_CONSOLE_BUILD porque el runner no tiene display.
+            # publicado. El simulador es headless: X11 y Wayland se desactivan
+            # explicitamente. UNIX_CONSOLE_BUILD solo no bastaba: el runner
+            # tiene X11 parcial y abortaba por falta del paquete XTEST.
             A="bash tools/ci/annotate.sh"
             $A "clone SDL3" git clone --depth 1 --branch release-3.4.20 \
               https://github.com/libsdl-org/SDL.git /tmp/SDL3
             $A "configure SDL3" cmake -S /tmp/SDL3 -B /tmp/SDL3-build -G Ninja \
               -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/tmp/sdl3 \
               -DSDL_SHARED=OFF -DSDL_STATIC=ON -DSDL_TESTS=OFF \
-              -DSDL_EXAMPLES=OFF -DSDL_UNIX_CONSOLE_BUILD=ON
+              -DSDL_EXAMPLES=OFF -DSDL_UNIX_CONSOLE_BUILD=ON \
+              -DSDL_X11=OFF -DSDL_WAYLAND=OFF
             $A "build SDL3" cmake --build /tmp/SDL3-build --parallel 2
             $A "install SDL3" cmake --install /tmp/SDL3-build
           fi
