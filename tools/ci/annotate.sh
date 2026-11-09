@@ -34,12 +34,25 @@ trap 'rm -f "$LOG"' EXIT
 rc="${PIPESTATUS[0]}"
 
 if [ "$rc" -ne 0 ] && [ "${GITHUB_ACTIONS:-}" = "true" ]; then
+  # GitHub trunca el mensaje de una anotacion a 4096 caracteres. Una linea de
+  # comando de gcc/Zephyr mide >3000 y se comia todo el presupuesto: la traza
+  # llegaba cortada justo antes del error. Por eso se filtran las lineas
+  # largas (son invocaciones, no diagnosticos) y se prioriza lo que parece un
+  # error real, con un presupuesto de caracteres explicito.
+  #
   # Una anotacion es una sola linea: los saltos se escapan como %0A y los %
   # literales primero, para no corromper el mensaje.
-  tail -n 40 "$LOG" \
+  {
+    grep -nE '(error:|Error|error #|FAILED|fatal|undefined reference|No such file|Assertion|assert)' \
+      "$LOG" | tail -n 25 | cut -c1-220
+    echo "--- contexto final ---"
+    tail -n 25 "$LOG"
+  } \
+    | awk 'length($0) <= 400' \
     | sed -e 's/%/%25/g' -e 's/\r/%0D/g' \
     | awk -v label="$LABEL" -v rc="$rc" '
-        { lines = lines $0 "%0A" }
+        { if (used + length($0) > 3400) next; used += length($0) + 3
+          lines = lines $0 "%0A" }
         END { printf "::error::%s fallo (exit %d)%s%s\n", label, rc, "%0A", lines }
       '
 fi

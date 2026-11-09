@@ -184,6 +184,11 @@ jobs:
   test:
     name: Unit Tests (native_sim)
     runs-on: ubuntu-latest
+    env:
+      # native_sim corre en el host: usa el gcc del sistema, no el SDK de ARM.
+      # Este job no instala el SDK a proposito, y sin esto Zephyr lo buscaba y
+      # abortaba con "Could not find a package configuration file ... Zephyr-sdk".
+      ZEPHYR_TOOLCHAIN_VARIANT: host
     steps:
       - uses: actions/checkout@v7
 
