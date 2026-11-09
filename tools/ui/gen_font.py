@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Genera simulator/roboto_font.h: atlas antialiasado de Roboto para el simulador.
+"""Genera common/include/roboto_font.h: atlas antialiasado de Roboto para el simulador.
 
 Por que existe: el simulador dibujaba texto con una fuente bitmap de 5x7 escalada
 por enteros, y eso es lo que le daba aspecto de terminal ochentera en vez de
@@ -23,7 +23,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-OUT = ROOT / "simulator" / "roboto_font.h"
+OUT = ROOT / "common" / "include" / "roboto_font.h"
 
 # ASCII imprimible + los caracteres que el espanol necesita de verdad.
 # No olvidar los signos tecnicos: µ (base de tiempo), … (truncado), – (rangos),

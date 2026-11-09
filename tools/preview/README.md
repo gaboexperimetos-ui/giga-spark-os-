@@ -115,10 +115,10 @@ queda resaltado para siempre. Por eso inicializa `SDL_INIT_TIMER` y usa
 
 ## Interfaz Material Design 3
 
-El simulador usa **Roboto con antialiasing** (`simulator/roboto_font.h`, atlas de
+El simulador usa **Roboto con antialiasing** (`common/include/roboto_font.h`, atlas de
 4 bits generado por `tools/ui/gen_font.py`) y componentes Material: superficies
 tonales, switches de pastilla, chips, slider y barra de navegación de 3 botones.
-La capa de dibujo está en `simulator/ui_material.c`.
+La capa de dibujo está en `common/ui_material.c`.
 
 Roboto es de Google bajo SIL OFL 1.1; el texto de la licencia está en
 `simulator/fonts/OFL-Roboto.txt`. Regenerar el atlas (solo si cambia la UI):

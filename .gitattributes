@@ -37,7 +37,7 @@ Makefile text eol=lf
 # - linguist-generated: GitHub lo colapsa en los diffs y no lo cuenta como
 #   lenguaje del repo (son 6400 lineas de bytes, no codigo escrito a mano).
 # - -diff: un diff de 400 KB de numeros no aporta nada en revision.
-simulator/roboto_font.h linguist-generated=true -diff
+common/include/roboto_font.h linguist-generated=true -diff
 
 # Licencia de la fuente: texto legal, no linguist lo detecta como tal.
 simulator/fonts/OFL-Roboto.txt linguist-documentation=true

@@ -17,8 +17,9 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-HEADER = ROOT / "simulator" / "roboto_font.h"
-SOURCES = [ROOT / "simulator" / "main.c", ROOT / "simulator" / "ui_material.c"]
+HEADER = ROOT / "common" / "include" / "roboto_font.h"
+SOURCES = [ROOT / "common" / "ui_os.c", ROOT / "common" / "ui_material.c",
+           ROOT / "simulator" / "main.c"]
 
 # Literales de cadena en C, admite escapes simples.
 STRING_RE = re.compile(r'"((?:[^"\\\n]|\\.)*)"')

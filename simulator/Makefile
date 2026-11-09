@@ -48,7 +48,8 @@ BIN = gigaspark_sim
 
 .PHONY: all clean run test
 all: $(BIN)
-$(BIN): main.c ui_material.c sdl_compat.h roboto_font.h ../common/framebuffer.h ../common/include/ui_theme.h
+$(BIN): main.c ../common/ui_os.c ../common/ui_material.c sdl_compat.h \
+        ../common/include/roboto_font.h ../common/framebuffer.h ../common/include/ui_theme.h
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ main.c $(LDLIBS)
 run: $(BIN)
 	./$(BIN)

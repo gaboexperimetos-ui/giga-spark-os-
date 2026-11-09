@@ -9,11 +9,11 @@ El simulador permite ejecutar apps de Gigaspark OS en tu PC sin necesidad del ha
 ### Aspecto Material Design 3
 
 La interfaz imita Android, no una terminal: **Roboto con antialiasing** (atlas de
-cobertura de 4 bits en `simulator/roboto_font.h`), superficies tonales elevadas,
+cobertura de 4 bits en `common/include/roboto_font.h`), superficies tonales elevadas,
 switches de pastilla, chips, slider y **barra de navegacion de 3 botones**
 (atras / inicio / recientes) abajo, con barra de estado arriba y app bar.
 
-La capa de dibujo esta en `simulator/ui_material.c`: mezcla con alfa en RGB565,
+La capa de dibujo esta en `common/ui_material.c`: mezcla con alfa en RGB565,
 rectangulos redondeados y circulos antialiasados, iconos de trazo grueso y
 widgets M3. Roboto es de Google, licencia SIL OFL 1.1
 (`simulator/fonts/OFL-Roboto.txt`); el atlas se regenera con
