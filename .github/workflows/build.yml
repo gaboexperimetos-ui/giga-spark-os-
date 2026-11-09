@@ -35,7 +35,8 @@ jobs:
           set -euo pipefail
           # -x sigue los `source`. Los scripts se listan explicitamente para
           # que un fichero nuevo no entre sin revisar por accidente.
-          shellcheck -x flasher/flash.sh tools/preview/build.sh tools/preview/bootstrap.sh
+          shellcheck -x flasher/flash.sh tools/preview/build.sh \
+            tools/preview/bootstrap.sh tools/ci/annotate.sh
       - name: yamllint
         run: |
           set -euo pipefail
@@ -43,7 +44,8 @@ jobs:
       - name: Bash syntax
         run: |
           set -euo pipefail
-          for f in flasher/flash.sh tools/preview/build.sh tools/preview/bootstrap.sh; do
+          for f in flasher/flash.sh tools/preview/build.sh \
+                   tools/preview/bootstrap.sh tools/ci/annotate.sh; do
             bash -n "$f"
           done
 
@@ -79,14 +81,19 @@ jobs:
 
       # west init -l . requeria un west.yml que NO existia en el repo: estos
       # jobs nunca pudieron pasar. El manifiesto ya esta versionado.
+      # Cada comando va por separado y con annotate.sh: los logs completos se
+      # descargan de un blob de Azure que no siempre es alcanzable, pero las
+      # anotaciones se leen por la API. Asi un fallo deja el error real visible
+      # en vez de solo "Process completed with exit code 1".
       - name: Initialize west workspace
         run: |
           set -euo pipefail
-          python -m pip install --upgrade pip west
-          west init -l .
-          west update --narrow -o=--depth=1
-          west zephyr-export
-          pip install -r zephyr/scripts/requirements.txt
+          A="bash tools/ci/annotate.sh"
+          $A "pip install west" python -m pip install --upgrade pip west
+          $A "west init" west init -l .
+          $A "west update" west update --narrow -o=--depth=1
+          $A "west zephyr-export" west zephyr-export
+          $A "pip requirements" pip install -r zephyr/scripts/requirements.txt
 
       - name: Build M7 (sysbuild incluya el M4)
         run: |
@@ -130,14 +137,19 @@ jobs:
           tar xf toolchain.tar.xz -C "$HOME/zephyr-sdk-${ZEPHYR_SDK_VERSION}"
           "$HOME/zephyr-sdk-${ZEPHYR_SDK_VERSION}/setup.sh" -t arm-zephyr-eabi -c
 
+      # Cada comando va por separado y con annotate.sh: los logs completos se
+      # descargan de un blob de Azure que no siempre es alcanzable, pero las
+      # anotaciones se leen por la API. Asi un fallo deja el error real visible
+      # en vez de solo "Process completed with exit code 1".
       - name: Initialize west workspace
         run: |
           set -euo pipefail
-          python -m pip install --upgrade pip west
-          west init -l .
-          west update --narrow -o=--depth=1
-          west zephyr-export
-          pip install -r zephyr/scripts/requirements.txt
+          A="bash tools/ci/annotate.sh"
+          $A "pip install west" python -m pip install --upgrade pip west
+          $A "west init" west init -l .
+          $A "west update" west update --narrow -o=--depth=1
+          $A "west zephyr-export" west zephyr-export
+          $A "pip requirements" pip install -r zephyr/scripts/requirements.txt
 
       - name: Build M4
         run: |
@@ -169,14 +181,19 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             git cmake ninja-build gperf ccache gcc-multilib
 
+      # Cada comando va por separado y con annotate.sh: los logs completos se
+      # descargan de un blob de Azure que no siempre es alcanzable, pero las
+      # anotaciones se leen por la API. Asi un fallo deja el error real visible
+      # en vez de solo "Process completed with exit code 1".
       - name: Initialize west workspace
         run: |
           set -euo pipefail
-          python -m pip install --upgrade pip west
-          west init -l .
-          west update --narrow -o=--depth=1
-          west zephyr-export
-          pip install -r zephyr/scripts/requirements.txt
+          A="bash tools/ci/annotate.sh"
+          $A "pip install west" python -m pip install --upgrade pip west
+          $A "west init" west init -l .
+          $A "west update" west update --narrow -o=--depth=1
+          $A "west zephyr-export" west zephyr-export
+          $A "pip requirements" pip install -r zephyr/scripts/requirements.txt
 
       - name: Run Buddy Allocator tests
         run: |
@@ -284,14 +301,15 @@ jobs:
           if [ "${{ matrix.sdl }}" = "3" ]; then
             # SDL3 no esta en los repos de Ubuntu LTS: se construye el tag
             # publicado. UNIX_CONSOLE_BUILD porque el runner no tiene display.
-            git clone --depth 1 --branch release-3.4.20 \
+            A="bash tools/ci/annotate.sh"
+            $A "clone SDL3" git clone --depth 1 --branch release-3.4.20 \
               https://github.com/libsdl-org/SDL.git /tmp/SDL3
-            cmake -S /tmp/SDL3 -B /tmp/SDL3-build -G Ninja \
+            $A "configure SDL3" cmake -S /tmp/SDL3 -B /tmp/SDL3-build -G Ninja \
               -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/tmp/sdl3 \
               -DSDL_SHARED=OFF -DSDL_STATIC=ON -DSDL_TESTS=OFF \
               -DSDL_EXAMPLES=OFF -DSDL_UNIX_CONSOLE_BUILD=ON
-            cmake --build /tmp/SDL3-build --parallel 2
-            cmake --install /tmp/SDL3-build
+            $A "build SDL3" cmake --build /tmp/SDL3-build --parallel 2
+            $A "install SDL3" cmake --install /tmp/SDL3-build
           fi
       - name: Build and test against SDL${{ matrix.sdl }}
         run: |
