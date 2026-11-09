@@ -102,10 +102,11 @@ jobs:
           $A "pip requirements" pip install -r "$ZEPHYR/scripts/requirements.txt"
           $A "west zephyr-export" west zephyr-export
 
-      - name: Build M7 (sysbuild incluya el M4)
+      - name: Build M7 (sysbuild incluye el M4)
         run: |
           set -euo pipefail
-          west build -b arduino_giga_r1/stm32h747xx/m7 \
+          bash tools/ci/annotate.sh "west build M7" \
+            west build -b arduino_giga_r1/stm32h747xx/m7 \
             --shield arduino_giga_display_shield
 
       - name: Upload M7 binary
@@ -168,7 +169,8 @@ jobs:
       - name: Build M4
         run: |
           set -euo pipefail
-          west build -b arduino_giga_r1/stm32h747xx/m4 m4
+          bash tools/ci/annotate.sh "west build M4" \
+            west build -b arduino_giga_r1/stm32h747xx/m4 m4
 
       - name: Upload M4 binary
         uses: actions/upload-artifact@v7
@@ -219,14 +221,18 @@ jobs:
       - name: Run Buddy Allocator tests
         run: |
           set -euo pipefail
-          west build -b native_sim/native/64 --build-dir build_test_buddy tests/unit/mem_engine
-          ./build_test_buddy/zephyr/zephyr.exe
+          A="bash tools/ci/annotate.sh"
+          $A "west build mem_engine" \
+            west build -b native_sim/native/64 --build-dir build_test_buddy tests/unit/mem_engine
+          $A "run mem_engine" ./build_test_buddy/zephyr/zephyr.exe
 
       - name: Run zRAM LRU tests
         run: |
           set -euo pipefail
-          west build -b native_sim/native/64 --build-dir build_test_zram tests/unit/zram_comp
-          ./build_test_zram/zephyr/zephyr.exe
+          A="bash tools/ci/annotate.sh"
+          $A "west build zram_comp" \
+            west build -b native_sim/native/64 --build-dir build_test_zram tests/unit/zram_comp
+          $A "run zram_comp" ./build_test_zram/zephyr/zephyr.exe
 
   build-simulator:
     name: Build Simulator (Makefile)
