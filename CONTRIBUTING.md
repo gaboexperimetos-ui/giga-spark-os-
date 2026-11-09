@@ -57,7 +57,9 @@ pip install west
 west init -l .
 west update
 # requirements ANTES de zephyr-export: export importa jsonschema y pyelftools.
-pip install -r zephyr/scripts/requirements.txt
+# Ojo con la ruta: `west init -l .` crea el workspace en el directorio PADRE,
+# asi que zephyr/ queda como HERMANO del repo, no debajo.
+pip install -r "$(west topdir)/zephyr/scripts/requirements.txt"
 west zephyr-export
 west build -b arduino_giga_r1/stm32h747xx/m7 --shield arduino_giga_display_shield
 ```

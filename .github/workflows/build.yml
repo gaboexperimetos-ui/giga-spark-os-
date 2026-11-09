@@ -95,7 +95,11 @@ jobs:
           # requirements ANTES de zephyr-export: export importa jsonschema y
           # pyelftools, que vienen de aqui. En el orden anterior fallaba con
           # "ModuleNotFoundError: No module named 'jsonschema'".
-          $A "pip requirements" pip install -r zephyr/scripts/requirements.txt
+          # `west init -l .` crea el workspace en el directorio PADRE: zephyr/
+          # queda como HERMANO del repo, no debajo. La ruta relativa fallaba
+          # con "Could not open requirements file". west topdir da la raiz real.
+          ZEPHYR="$(west topdir)/zephyr"
+          $A "pip requirements" pip install -r "$ZEPHYR/scripts/requirements.txt"
           $A "west zephyr-export" west zephyr-export
 
       - name: Build M7 (sysbuild incluya el M4)
@@ -154,7 +158,11 @@ jobs:
           # requirements ANTES de zephyr-export: export importa jsonschema y
           # pyelftools, que vienen de aqui. En el orden anterior fallaba con
           # "ModuleNotFoundError: No module named 'jsonschema'".
-          $A "pip requirements" pip install -r zephyr/scripts/requirements.txt
+          # `west init -l .` crea el workspace en el directorio PADRE: zephyr/
+          # queda como HERMANO del repo, no debajo. La ruta relativa fallaba
+          # con "Could not open requirements file". west topdir da la raiz real.
+          ZEPHYR="$(west topdir)/zephyr"
+          $A "pip requirements" pip install -r "$ZEPHYR/scripts/requirements.txt"
           $A "west zephyr-export" west zephyr-export
 
       - name: Build M4
@@ -201,7 +209,11 @@ jobs:
           # requirements ANTES de zephyr-export: export importa jsonschema y
           # pyelftools, que vienen de aqui. En el orden anterior fallaba con
           # "ModuleNotFoundError: No module named 'jsonschema'".
-          $A "pip requirements" pip install -r zephyr/scripts/requirements.txt
+          # `west init -l .` crea el workspace en el directorio PADRE: zephyr/
+          # queda como HERMANO del repo, no debajo. La ruta relativa fallaba
+          # con "Could not open requirements file". west topdir da la raiz real.
+          ZEPHYR="$(west topdir)/zephyr"
+          $A "pip requirements" pip install -r "$ZEPHYR/scripts/requirements.txt"
           $A "west zephyr-export" west zephyr-export
 
       - name: Run Buddy Allocator tests
