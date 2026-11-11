@@ -9,7 +9,7 @@ El proyecto no publica versiones etiquetadas todavía: todo lo de abajo está en
 
 ### Añadido
 
-- **CI verificado en la última ejecución: 8/8 jobs en verde** (`42721414186`).
+- **CI verificado en la última ejecución: 8/8 jobs en verde** (`42948824192`).
   Las correcciones posteriores incluyeron `CONFIG_STM32_LTDC_RGB565`, Python 3.15
   con dependencias nativas para `hidapi`, token API para el checker del manifiesto,
   y mover `st_sel` al backend SDL para mantener `-Werror` limpio en ARM.

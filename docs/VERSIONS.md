@@ -29,7 +29,7 @@ de apt. También instala `pkg-config`, libusb y libudev porque `hidapi` no publi
 wheel para Python 3.15 y se compila desde fuentes. El check del manifiesto usa
 `GITHUB_TOKEN` para no topar con el rate limit anónimo de la API.
 
-**Estado actual:** PR #1, run `42721414186`, 8/8 jobs SUCCESS: lint, host tests,
+**Estado actual:** PR #1, run `42948824192`, 8/8 jobs SUCCESS: lint, host tests,
 native_sim, M4, M7, SDL2, SDL3 y simulador. El job M7 publica `zephyr.bin` y
 `zephyr.elf`; el ZIP de artefactos completo pesa 2 818 374 bytes (la ejecución
 de referencia anterior pesaba 2 496 045; el ZIP no es el tamaño del binario).
