@@ -1,0 +1,59 @@
+# Gigaspark OS - manifiesto de west
+#
+# Este manifiesto hace reproducible el workspace Zephyr. Antes faltaba y los
+# jobs no podían superar `west init -l .`; hoy M7/M4 compilan en CI.
+#
+# Zephyr 4.5.0 (2026-10-28) es la ultima version estable publicada.
+# Se importan solo los modulos necesarios (HAL de ST, IPC, filesystem y libc).
+# LVGL ya no se usa: la interfaz Material es un render RGB565 portable.
+#
+# SDK: Zephyr 4.5.0 declara SDK_VERSION 1.0.1 (ver fichero SDK_VERSION del repo).
+# Python: Zephyr 4.5.0 exige >= 3.12 (cmake/modules/python.cmake).
+#
+# Uso:
+#   west init -l .
+#   west update
+#   west zephyr-export
+#   west build -b arduino_giga_r1/stm32h747xx/m7 --shield arduino_giga_display_shield
+
+manifest:
+  version: "1.2"
+
+  remotes:
+    - name: zephyrproject-rtos
+      url-base: https://github.com/zephyrproject-rtos
+
+  projects:
+    - name: zephyr
+      remote: zephyrproject-rtos
+      revision: v4.5.0
+      import:
+        # Solo los modulos que este proyecto usa. Importar todo el manifiesto
+        # de Zephyr descarga decenas de HALs de otros fabricantes (>1 GB) y
+        # alarga mucho el CI sin aportar nada a un STM32H747.
+        # Cada nombre tiene que existir TAL CUAL en el west.yml de Zephyr
+        # v4.5.0. tools/ci/check_manifest.py lo verifica en el job de lint:
+        # un nombre inexistente se ignora en silencio y el sintoma aparece
+        # mucho despues, como un header que no se encuentra.
+        name-allowlist:
+          # CMSIS son DOS proyectos distintos, no variantes del mismo:
+          #   cmsis_6 -> modules/cmsis_6/cmsis_core.h, el de Cortex-M
+          #   cmsis   -> el de Cortex-A/R
+          # Faltaba cmsis_6 y el M7 y el M4 morian con
+          # "fatal error: cmsis_core.h: No such file or directory", porque
+          # modules/cmsis_6/CMakeLists.txt solo agrega el include si el
+          # proyecto esta en el workspace.
+          - cmsis_6
+          - cmsis
+          - hal_stm32
+          # open-amp + libmetal: IPC_SERVICE entre el M7 y el M4.
+          - open-amp
+          - libmetal
+          # fatfs lo necesita el M4 (CONFIG_FAT_FILESYSTEM_ELM). Tambien
+          # faltaba: habria sido el siguiente fallo despues de cmsis_6.
+          - fatfs
+          - mbedtls
+          - picolibc
+
+  self:
+    path: gigaspark-os

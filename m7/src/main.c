@@ -31,6 +31,7 @@
 #include "power_manager.h"
 #include "net_manager.h"
 #include "app_downloader.h"
+#include "display_giga.h"
 
 LOG_MODULE_REGISTER(gigaspark_m7, CONFIG_LOG_DEFAULT_LEVEL);
 
@@ -115,25 +116,28 @@ static void ui_launcher_thread(void *p1, void *p2, void *p3)
 	/* Initialize power manager */
 	power_manager_init();
 
-	/*
-	 * TODO: When LVGL display driver is ready, this thread will:
-	 *   while (1) {
-	 *       lv_timer_handler();  // Processes touch, renders UI
-	 *       k_msleep(5);         // 5ms = 200 FPS max
-	 *   }
+	/* Pantalla real del Arduino GIGA Display Shield.
 	 *
-	 * For now, it runs a simple LED blink to show it's alive.
-	 */
+	 * Antes esto era un TODO y el hilo se limitaba a parpadear un LED: el
+	 * firmware arrancaba pero no dibujaba nada, y la interfaz Material solo
+	 * existia en el simulador. Ahora corre el mismo nucleo (common/ui_os.c)
+	 * sobre el panel ST7701 por LTDC, con touch GT911.
+	 *
+	 * Si el panel no esta listo se registra el error y se mantiene el LED
+	 * como ultimo recurso: el resto del OS (IPC, apps, red) sigue vivo. */
+	if (display_giga_init() == 0) {
+		display_giga_run();   /* no retorna */
+	}
 
-	while (1) {
-		/* Blink LED to show UI thread is running */
+	LOG_ERR("panel no disponible: la interfaz no se puede dibujar");
+	for (;;) {
 		gpio_pin_toggle_dt(&led_green);
 		k_msleep(500);
 	}
 }
 
 /* Static thread: UI launcher, low priority (PRIORITY=14) */
-K_THREAD_DEFINE(ui_launcher_tid, 4096,
+K_THREAD_DEFINE(ui_launcher_tid, 8192,
 		ui_launcher_thread, NULL, NULL, NULL,
 		14, 0, 0);
 

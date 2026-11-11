@@ -1,0 +1,18 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Reporte de seguridad (privado)
+    url: https://github.com/gaboexperimetos-ui/giga-spark-os-/security/advisories/new
+    about: |
+      No abras un issue público con una vulnerabilidad. Usa el aviso privado de
+      GitHub. Detalles en SECURITY.md.
+  - name: Cómo montar el entorno y contribuir
+    url: https://github.com/gaboexperimetos-ui/giga-spark-os-/blob/main/CONTRIBUTING.md
+    about: |
+      Comandos de build y test, reglas de estilo y las trampas que ya nos
+      costaron tiempo. Muchos "no me compila" se resuelven aquí.
+  - name: Versiones de la stack y qué está verificado
+    url: https://github.com/gaboexperimetos-ui/giga-spark-os-/blob/main/docs/VERSIONS.md
+    about: |
+      Qué versiones de Zephyr, SDL y Actions usamos, y qué no se ha podido
+      verificar (la compilación ARM está en CI; encendido y timings requieren
+      probar una placa GIGA Display Shield).

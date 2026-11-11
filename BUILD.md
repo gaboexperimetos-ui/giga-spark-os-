@@ -13,7 +13,7 @@
 |-------------|----------------|-------------|
 | Git | 2.x | `sudo pacman -S git` |
 | CMake | 3.20 | `sudo pacman -S cmake` |
-| Python | 3.8+ | `sudo pacman -S python` |
+| Python | 3.12+ (CI: 3.15) | `sudo pacman -S python` |
 | Ninja | 1.10 | `sudo pacman -S ninja` |
 | dtc | 1.5+ | `sudo pacman -S dtc` |
 | Zephyr SDK | 1.0.1 | Ver abajo |
@@ -21,71 +21,75 @@
 ### Instalar Zephyr SDK 1.0.1
 
 ```bash
-# Descargar SDK
-wget https://github.com/zephyrproject-rtos/sdk-ng/releases/download/v1.0.1/zephyr-sdk-1.0.1_linux-x86_64.tar.xz
-
-# Extraer
-tar xf zephyr-sdk-1.0.1_linux-x86_64.tar.xz -C ~
-
-# Instalar toolchains para ARM
-cd ~/zephyr-sdk-1.0.1
-./setup.sh -t arm-zephyr-eabi
+# Sigue el mismo paquete minimal + toolchain ARM que usa CI.
+SDK=1.0.1
+BASE="https://github.com/zephyrproject-rtos/sdk-ng/releases/download/v$SDK"
+wget -q "$BASE/zephyr-sdk-${SDK}_linux-x86_64_minimal.tar.xz"
+tar xf "zephyr-sdk-${SDK}_linux-x86_64_minimal.tar.xz" -C "$HOME"
+wget -q -O toolchain.tar.xz \
+  "$BASE/toolchain_gnu_linux-x86_64_arm-zephyr-eabi.tar.xz"
+tar xf toolchain.tar.xz -C "$HOME/zephyr-sdk-${SDK}"
+"$HOME/zephyr-sdk-${SDK}/setup.sh" -t arm-zephyr-eabi -c
 ```
 
-### Configurar Entorno
+### Configurar el workspace de Zephyr
+
+Ejecuta desde la raíz de este repositorio. `west.yml` es el manifiesto local;
+`west init -l .` crea el workspace en el directorio padre del repo.
 
 ```bash
-# Crear virtual environment de Python
+# Instalar host tools (Debian/Ubuntu; incluye dependencias nativas de hidapi
+# para que funcionen los requirements de Zephyr con Python 3.15).
+sudo apt-get install -y git cmake ninja-build gperf ccache \
+  dfu-util device-tree-compiler pkg-config libusb-1.0-0-dev libudev-dev
+
 python3 -m venv ~/.venvs/zephyr
 source ~/.venvs/zephyr/bin/activate
+python -m pip install --upgrade pip west
+west init -l .
+west update --narrow -o=--depth=1
+ZEPHYR="$(west topdir)/zephyr"
+pip install -r "$ZEPHYR/scripts/requirements.txt"
+west zephyr-export
 
-# Instalar paquetes de Zephyr
-pip install west
-west init ~/zephyr-ws
-cd ~/zephyr-ws
-west update
-pip install -r zephyr/scripts/requirements.txt
+export ZEPHYR_BASE="$ZEPHYR"
+export ZEPHYR_SDK_INSTALL_DIR="$HOME/zephyr-sdk-1.0.1"
 ```
+
+El CI usa Python 3.15; Zephyr 4.5.0 requiere Python >=3.12. Con Python 3.15
+`hidapi` se compila desde fuente, por eso hacen falta `pkg-config`, libusb y
+libudev.
 
 ---
 
 ## Compilar
 
-### Firmware Principal (M7 + M4 via Sysbuild)
+### Firmware M7 + backend de pantalla
+
+Desde la raíz del repositorio, con el entorno anterior activado:
 
 ```bash
-cd ~/gigaspark_os
-
-# Activar entorno
-source ~/.venvs/zephyr/bin/activate
-export ZEPHYR_BASE=~/zephyr-ws/zephyr
-export ZEPHYR_SDK_INSTALL_DIR=~/zephyr-sdk-1.0.1
-
-# Limpiar build anterior
-rm -rf build
-
-# Compilar ambos nucleos
-west build -p -b arduino_giga_r1/stm32h747xx/m7 --sysbuild .
+west build -p -b arduino_giga_r1/stm32h747xx/m7 \
+  --shield arduino_giga_display_shield
 ```
 
-### Salida esperada
+Este es el comando verificado por el job `Build M7 Firmware`. La salida incluye
+`build/zephyr/zephyr.bin` y `build/zephyr/zephyr.elf`. El overlay de la raíz
+habilita el LTDC, el panel ST7701 y el GT911.
 
-```
-[276/276] Completed 'gigaspark_os'
-
-Memory region         Used Size  Region Size  %age Used
-           FLASH:      143360 B       768 KB     18.33%
-             RAM:      128000 B       512 KB     24.41%
-
-BUILD EXITOSO:
-  M7: 140 KB | M4: 64 KB
-```
-
-### Compilar Solo M4 (opcional)
+### Firmware M4 (opcional)
 
 ```bash
-west build -p -b arduino_giga_r1/stm32h747xx/m4 m4/
+west build -p -b arduino_giga_r1/stm32h747xx/m4 m4
 ```
+
+Este es el comando del job `Build M4 Firmware`. Las cifras de flash/RAM dependen
+de la configuración y del SDK; no se fija aquí una salida antigua como garantía.
+Los artefactos `.bin`/`.elf` más recientes los publica GitHub Actions.
+
+**Validación física pendiente:** una compilación correcta no demuestra que el
+panel encienda. Timings, orientación táctil y brillo SWIRE necesitan el Arduino
+GIGA Display Shield conectado; ver `docs/HARDWARE_FIDELITY.md`.
 
 ---
 
@@ -168,12 +172,11 @@ Los drivers de hardware funcionan en modo stub si los periféricos no estan habi
 
 ---
 
-## Tamano del Firmware
+## Tamaño del Firmware
 
-| Componente | Flash | RAM |
-|------------|-------|-----|
-| M7 (Principal) | 140 KB | 125 KB |
-| M4 (Remoto) | 64 KB | - |
-| **Total** | **204 KB** | - |
-| Disponible | 768 KB | 512 KB |
-| **Uso** | **27%** | **24%** |
+No se mantienen las cifras históricas de flash/RAM que aparecían aquí: no
+coincidían con el mapa de memoria real del H747 y podían confundirse con el
+framebuffer. La UI reserva **768 000 bytes en SDRAM externa** (800×480 RGB565);
+los `.bin` y `.elf` actuales se descargan como artefactos de los jobs M7/M4 en
+GitHub Actions. La compilación CI no sustituye la validación de encendido del
+panel en la placa física.

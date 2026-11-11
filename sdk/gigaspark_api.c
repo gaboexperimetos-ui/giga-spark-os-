@@ -8,6 +8,7 @@
 
 #include "gigaspark_api.h"
 #include "ipc_protocol.h"
+#include "framebuffer.h"
 
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
@@ -38,34 +39,22 @@ static uint16_t fb[GIGA_SCREEN_W * GIGA_SCREEN_H] __attribute__((aligned(4)));
 
 static void giga_fill_rect_impl(int x, int y, int w, int h, uint16_t color)
 {
-	if (x < 0 || y < 0 || x + w > GIGA_SCREEN_W || y + h > GIGA_SCREEN_H) {
+	/* Preserve the SDK's reject-outside-bounds contract without x+w overflow. */
+	if (x < 0 || y < 0 || w <= 0 || h <= 0 ||
+	    w > GIGA_SCREEN_W - x || h > GIGA_SCREEN_H - y || x >= GIGA_SCREEN_W || y >= GIGA_SCREEN_H)
 		return;
-	}
-	for (int row = y; row < y + h; row++) {
-		for (int col = x; col < x + w; col++) {
-			fb[row * GIGA_SCREEN_W + col] = color;
-		}
-	}
+	for (int row = 0; row < h; ++row)
+		giga_fb_span(&fb[(y + row) * GIGA_SCREEN_W + x], (size_t)w, color);
 }
 
 static void giga_draw_rect_impl(int x, int y, int w, int h, uint16_t color)
 {
-	/* Draw border only */
-	for (int i = 0; i < w; i++) {
-		if (x + i >= 0 && x + i < GIGA_SCREEN_W) {
-			if (y >= 0 && y < GIGA_SCREEN_H)
-				fb[y * GIGA_SCREEN_W + (x + i)] = color;
-			if (y + h - 1 >= 0 && y + h - 1 < GIGA_SCREEN_H)
-				fb[(y + h - 1) * GIGA_SCREEN_W + (x + i)] = color;
-		}
-	}
-	for (int j = 0; j < h; j++) {
-		if (y + j >= 0 && y + j < GIGA_SCREEN_H) {
-			if (x >= 0 && x < GIGA_SCREEN_W)
-				fb[(y + j) * GIGA_SCREEN_W + x] = color;
-			if (x + w - 1 >= 0 && x + w - 1 < GIGA_SCREEN_W)
-				fb[(y + j) * GIGA_SCREEN_W + (x + w - 1)] = color;
-		}
+	if (!giga_fb_clip(&x, &y, &w, &h, GIGA_SCREEN_W, GIGA_SCREEN_H)) return;
+	giga_fb_span(&fb[y * GIGA_SCREEN_W + x], (size_t)w, color);
+	giga_fb_span(&fb[(y + h - 1) * GIGA_SCREEN_W + x], (size_t)w, color);
+	for (int row = 1; row < h - 1; ++row) {
+		fb[(y + row) * GIGA_SCREEN_W + x] = color;
+		fb[(y + row) * GIGA_SCREEN_W + x + w - 1] = color;
 	}
 }
 

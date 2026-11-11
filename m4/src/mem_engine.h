@@ -1,6 +1,7 @@
 /*
  * Gigaspark OS - Memory Engine Header (Fase 16: Buddy Allocator)
- * Asignador buddy O(log N) con eviccion LRU.
+ * Asignador buddy con bitmaps; sin eviccion LRU en esta capa.
+* No es thread-safe: usar desde el hilo memory-engine del M4.
  */
 
 #ifndef GIGASPARK_MEM_ENGINE_H

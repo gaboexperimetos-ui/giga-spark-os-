@@ -88,8 +88,14 @@ void nav_bar_touch_handler(int x, int y)
 		return;
 	}
 
-	/* Check if touch is in Home button zone (center of nav bar) */
-	if (x >= 190 && x <= 290 && y >= NAV_BAR_Y_START + 5 && y <= NAV_BAR_Y_START + 35) {
+	/*
+	 * Home button zone, derived from the screen geometry. The old literals
+	 * (190..290) were hardcoded for a 480 px wide screen and would have sat
+	 * off-centre on the real 800 px panel.
+	 */
+	if (x >= NAV_HOME_BTN_X && x < NAV_HOME_BTN_X + NAV_HOME_BTN_W &&
+	    y >= NAV_BAR_Y_START + NAV_BAR_PAD &&
+	    y < NAV_BAR_Y_START + NAV_BAR_HEIGHT - NAV_BAR_PAD) {
 		home_btn_pressed = true;
 		home_btn_process();
 	}

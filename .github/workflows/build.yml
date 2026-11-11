@@ -6,111 +6,385 @@ on:
   pull_request:
     branches: [master, main]
 
+# Cancela ejecuciones superseded de la misma rama/PR: ahorra minutos de CI.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Zephyr 4.5.0 (2026-10-28) declara SDK_VERSION 1.0.1 y exige Python >= 3.12.
+  ZEPHYR_SDK_VERSION: "1.0.1"
+  PYTHON_VERSION: "3.15"
+
 jobs:
+  # Lint rapido y sin dependencias del toolchain ARM: da senal en segundos
+  # aunque los jobs de firmware fallen. ShellCheck ya encontro un SC2046 real
+  # en build.sh y yamllint dos lineas fuera de limite.
+  lint:
+    name: Lint (shell + YAML)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install linters
+        run: python -m pip install --upgrade pip shellcheck-py yamllint pyyaml
+      - name: ShellCheck
+        run: |
+          set -euo pipefail
+          # -x sigue los `source`. Los scripts se listan explicitamente para
+          # que un fichero nuevo no entre sin revisar por accidente.
+          shellcheck -x flasher/flash.sh tools/preview/build.sh \
+            tools/preview/bootstrap.sh tools/ci/annotate.sh
+      - name: yamllint
+        run: |
+          set -euo pipefail
+          yamllint -c .yamllint .github/ west.yml
+      - name: Bash syntax
+        run: |
+          set -euo pipefail
+          for f in flasher/flash.sh tools/preview/build.sh \
+                   tools/preview/bootstrap.sh tools/ci/annotate.sh; do
+            bash -n "$f"
+          done
+      # Un nombre de modulo inexistente en el allowlist no da error: west lo
+      # ignora en silencio y el sintoma aparece luego como un header que falta
+      # (paso con cmsis_6). Verificarlo aqui cuesta segundos; descubrirlo en el
+      # job de firmware cuesta un workspace entero de Zephyr.
+      - name: Validate west manifest allowlist
+        env:
+          # Sin token la API de GitHub limita a 60 peticiones/hora por IP y el
+          # runner comparte IP: el check fallaba con HTTP 403 sin ser un bug.
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python tools/ci/check_manifest.py
+
   build-m7:
     name: Build M7 Firmware
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - name: Install Zephyr SDK
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install host dependencies
         run: |
           sudo apt-get update
+          # libusb/libudev: los requirements de Zephyr incluyen hidapi, que
+          # no publica wheel para Python 3.15 y pip lo compila desde fuente.
+          # Sin estas cabeceras falla con "pkg-config package 'libusb-1.0
+          # >= 1.0.9' not found".
           sudo apt-get install -y --no-install-recommends \
             git cmake ninja-build gperf ccache \
-            dfu-util device-tree-compiler \
-            python3-pip python3-venv python3-setuptools \
-            gcc-arm-none-eabi libnewlib-arm-none-eabi
-          pip3 install west
-          west init -l .
-          west update
+            dfu-util device-tree-compiler libsdl2-dev \
+            pkg-config libusb-1.0-0-dev libudev-dev
 
-      - name: Build M7
+      # El SDK de Zephyr trae su propio toolchain arm-zephyr-eabi. Antes se
+      # instalaba gcc-arm-none-eabi de apt, que NO es el toolchain que Zephyr
+      # espera y provoca fallos de enlace con picolibc.
+      - name: Install Zephyr SDK ${{ env.ZEPHYR_SDK_VERSION }}
         run: |
-          source ~/zephyr/zephyr-env.sh
-          west build -b arduino_giga_r1/stm32h747xx/m7
+          set -euo pipefail
+          base="https://github.com/zephyrproject-rtos/sdk-ng/releases/download/v${ZEPHYR_SDK_VERSION}"
+          wget -q "$base/zephyr-sdk-${ZEPHYR_SDK_VERSION}_linux-x86_64_minimal.tar.xz"
+          tar xf "zephyr-sdk-${ZEPHYR_SDK_VERSION}_linux-x86_64_minimal.tar.xz" -C "$HOME"
+          wget -q -O toolchain.tar.xz "$base/toolchain_gnu_linux-x86_64_arm-zephyr-eabi.tar.xz"
+          tar xf toolchain.tar.xz -C "$HOME/zephyr-sdk-${ZEPHYR_SDK_VERSION}"
+          "$HOME/zephyr-sdk-${ZEPHYR_SDK_VERSION}/setup.sh" -t arm-zephyr-eabi -c
+
+      # west init -l . requeria un west.yml que NO existia en el repo: estos
+      # jobs nunca pudieron pasar. El manifiesto ya esta versionado.
+      # Cada comando va por separado y con annotate.sh: los logs completos se
+      # descargan de un blob de Azure que no siempre es alcanzable, pero las
+      # anotaciones se leen por la API. Asi un fallo deja el error real visible
+      # en vez de solo "Process completed with exit code 1".
+      - name: Initialize west workspace
+        run: |
+          set -euo pipefail
+          A="bash tools/ci/annotate.sh"
+          $A "pip install west" python -m pip install --upgrade pip west
+          $A "west init" west init -l .
+          $A "west update" west update --narrow -o=--depth=1
+          # requirements ANTES de zephyr-export: export importa jsonschema y
+          # pyelftools, que vienen de aqui. En el orden anterior fallaba con
+          # "ModuleNotFoundError: No module named 'jsonschema'".
+          # `west init -l .` crea el workspace en el directorio PADRE: zephyr/
+          # queda como HERMANO del repo, no debajo. La ruta relativa fallaba
+          # con "Could not open requirements file". west topdir da la raiz real.
+          ZEPHYR="$(west topdir)/zephyr"
+          $A "pip requirements" pip install -r "$ZEPHYR/scripts/requirements.txt"
+          $A "west zephyr-export" west zephyr-export
+
+      - name: Build M7 (sysbuild incluye el M4)
+        run: |
+          set -euo pipefail
+          bash tools/ci/annotate.sh "west build M7" \
+            west build -b arduino_giga_r1/stm32h747xx/m7 \
+            --shield arduino_giga_display_shield
 
       - name: Upload M7 binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: gigaspark-m7
-          path: build/zephyr/zephyr.bin
+          path: |
+            build/zephyr/zephyr.bin
+            build/zephyr/zephyr.elf
+          if-no-files-found: error
 
   build-m4:
     name: Build M4 Firmware
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - name: Install Zephyr SDK
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install host dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             git cmake ninja-build gperf ccache \
-            dfu-util device-tree-compiler \
-            python3-pip python3-venv python3-setuptools \
-            gcc-arm-none-eabi libnewlib-arm-none-eabi
-          pip3 install west
-          west init -l .
-          west update
+            dfu-util device-tree-compiler libsdl2-dev \
+            pkg-config libusb-1.0-0-dev libudev-dev
+
+      - name: Install Zephyr SDK ${{ env.ZEPHYR_SDK_VERSION }}
+        run: |
+          set -euo pipefail
+          base="https://github.com/zephyrproject-rtos/sdk-ng/releases/download/v${ZEPHYR_SDK_VERSION}"
+          wget -q "$base/zephyr-sdk-${ZEPHYR_SDK_VERSION}_linux-x86_64_minimal.tar.xz"
+          tar xf "zephyr-sdk-${ZEPHYR_SDK_VERSION}_linux-x86_64_minimal.tar.xz" -C "$HOME"
+          wget -q -O toolchain.tar.xz "$base/toolchain_gnu_linux-x86_64_arm-zephyr-eabi.tar.xz"
+          tar xf toolchain.tar.xz -C "$HOME/zephyr-sdk-${ZEPHYR_SDK_VERSION}"
+          "$HOME/zephyr-sdk-${ZEPHYR_SDK_VERSION}/setup.sh" -t arm-zephyr-eabi -c
+
+      # Cada comando va por separado y con annotate.sh: los logs completos se
+      # descargan de un blob de Azure que no siempre es alcanzable, pero las
+      # anotaciones se leen por la API. Asi un fallo deja el error real visible
+      # en vez de solo "Process completed with exit code 1".
+      - name: Initialize west workspace
+        run: |
+          set -euo pipefail
+          A="bash tools/ci/annotate.sh"
+          $A "pip install west" python -m pip install --upgrade pip west
+          $A "west init" west init -l .
+          $A "west update" west update --narrow -o=--depth=1
+          # requirements ANTES de zephyr-export: export importa jsonschema y
+          # pyelftools, que vienen de aqui. En el orden anterior fallaba con
+          # "ModuleNotFoundError: No module named 'jsonschema'".
+          # `west init -l .` crea el workspace en el directorio PADRE: zephyr/
+          # queda como HERMANO del repo, no debajo. La ruta relativa fallaba
+          # con "Could not open requirements file". west topdir da la raiz real.
+          ZEPHYR="$(west topdir)/zephyr"
+          $A "pip requirements" pip install -r "$ZEPHYR/scripts/requirements.txt"
+          $A "west zephyr-export" west zephyr-export
 
       - name: Build M4
         run: |
-          source ~/zephyr/zephyr-env.sh
-          west build -b arduino_giga_r1/stm32h747xx/m4
+          set -euo pipefail
+          bash tools/ci/annotate.sh "west build M4" \
+            west build -b arduino_giga_r1/stm32h747xx/m4 m4
 
       - name: Upload M4 binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: gigaspark-m4
-          path: build/zephyr/zephyr.bin
+          path: |
+            build/zephyr/zephyr.bin
+            build/zephyr/zephyr.elf
+          if-no-files-found: error
 
   test:
     name: Unit Tests (native_sim)
     runs-on: ubuntu-latest
+    env:
+      # native_sim corre en el host: usa el gcc del sistema, no el SDK de ARM.
+      # Este job no instala el SDK a proposito, y sin esto Zephyr lo buscaba y
+      # abortaba con "Could not find a package configuration file ... Zephyr-sdk".
+      ZEPHYR_TOOLCHAIN_VARIANT: host
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - name: Install Zephyr SDK
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install host dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            git cmake ninja-build gperf ccache \
-            python3-pip python3-venv python3-setuptools
-          pip3 install west
-          west init -l .
-          west update
+            git cmake ninja-build gperf ccache gcc-multilib \
+            pkg-config libusb-1.0-0-dev libudev-dev
+
+      # Cada comando va por separado y con annotate.sh: los logs completos se
+      # descargan de un blob de Azure que no siempre es alcanzable, pero las
+      # anotaciones se leen por la API. Asi un fallo deja el error real visible
+      # en vez de solo "Process completed with exit code 1".
+      - name: Initialize west workspace
+        run: |
+          set -euo pipefail
+          A="bash tools/ci/annotate.sh"
+          $A "pip install west" python -m pip install --upgrade pip west
+          $A "west init" west init -l .
+          $A "west update" west update --narrow -o=--depth=1
+          # requirements ANTES de zephyr-export: export importa jsonschema y
+          # pyelftools, que vienen de aqui. En el orden anterior fallaba con
+          # "ModuleNotFoundError: No module named 'jsonschema'".
+          # `west init -l .` crea el workspace en el directorio PADRE: zephyr/
+          # queda como HERMANO del repo, no debajo. La ruta relativa fallaba
+          # con "Could not open requirements file". west topdir da la raiz real.
+          ZEPHYR="$(west topdir)/zephyr"
+          $A "pip requirements" pip install -r "$ZEPHYR/scripts/requirements.txt"
+          $A "west zephyr-export" west zephyr-export
 
       - name: Run Buddy Allocator tests
         run: |
-          source ~/zephyr/zephyr-env.sh
-          rm -rf build_test_buddy
-          west build -b native_sim --build-dir build_test_buddy tests/unit/mem_engine
-          ./build_test_buddy/zephyr/zephyr.exe
+          set -euo pipefail
+          A="bash tools/ci/annotate.sh"
+          $A "west build mem_engine" \
+            west build -b native_sim/native/64 --build-dir build_test_buddy tests/unit/mem_engine
+          $A "run mem_engine" ./build_test_buddy/zephyr/zephyr.exe
 
       - name: Run zRAM LRU tests
         run: |
-          source ~/zephyr/zephyr-env.sh
-          rm -rf build_test_zram
-          west build -b native_sim --build-dir build_test_zram tests/unit/zram_comp
-          ./build_test_zram/zephyr/zephyr.exe
+          set -euo pipefail
+          A="bash tools/ci/annotate.sh"
+          $A "west build zram_comp" \
+            west build -b native_sim/native/64 --build-dir build_test_zram tests/unit/zram_comp
+          $A "run zram_comp" ./build_test_zram/zephyr/zephyr.exe
 
   build-simulator:
-    name: Build Simulator (SDL2)
+    name: Build Simulator (Makefile)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
+      - uses: actions/checkout@v7
       - name: Install SDL2
         run: |
           sudo apt-get update
           sudo apt-get install -y libsdl2-dev gcc make pkg-config
-
       - name: Build Simulator
-        run: |
-          cd simulator
-          make
-
+        run: make -C simulator
       - name: Verify binary
+        run: file simulator/gigaspark_sim
+
+  host-checks:
+    name: Host Tests + Sanitizers
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install native dependencies
         run: |
-          file simulator/gigaspark_sim
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build gcc libsdl2-dev pkg-config
+      # Un directorio por invocacion: `cmake --build a b` NO es valido, devuelve
+      # "Unknown argument b" con exit 1. Sin `set -e` el paso seguia y ctest
+      # corria el binario anterior, dando verdes falsos.
+      - name: Release tests and simulator smoke test
+        run: |
+          set -euo pipefail
+          cmake -S tests/host -B build_host -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build_host --parallel 2
+          ctest --test-dir build_host --output-on-failure
+          cmake -S simulator -B build_simulator -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build_simulator --parallel 2
+          ctest --test-dir build_simulator --output-on-failure
+      - name: Address and undefined behavior sanitizers
+        run: |
+          set -euo pipefail
+          cmake -S tests/host -B build_host_san -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug -DGIGASPARK_SANITIZE=ON
+          cmake --build build_host_san --parallel 2
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 \
+            ctest --test-dir build_host_san --output-on-failure
+      # El puente va PRIMERO: test_http_contract arranca el servidor real y se
+      # salta si build_preview/bridge no existe. Con el orden anterior esos
+      # tests se omitian en silencio y el 501 de HEAD habria pasado CI.
+      - name: Preview bridge smoke test
+        run: |
+          set -euo pipefail
+          bash tools/preview/build.sh
+      - name: Preview color fidelity, font coverage and HTTP contract
+        run: |
+          set -euo pipefail
+          # RGB565: la expansion a 24 bits debe ser biyectiva o el preview
+          # muestra un color distinto al del panel. Cobertura de fuente: un
+          # glifo ausente se dibuja como '?' silenciosamente. Contrato HTTP:
+          # HEAD/OPTIONS en 501 hacian que el proxy marcara el preview caido.
+          python -m unittest discover -s tests/preview -v
+          # Fallar si algo se salto: un skip aqui significa que el puente no
+          # estaba y la mitad de la suite no se ejecuto.
+          python - <<'PY'
+          import subprocess, sys, unittest, pathlib
+          sys.path.insert(0, str(pathlib.Path('tests/preview').resolve()))
+          suite = unittest.defaultTestLoader.discover('tests/preview')
+          res = unittest.TextTestRunner(verbosity=0).run(suite)
+          if res.skipped:
+              sys.exit(f"{len(res.skipped)} tests se saltaron: {res.skipped}")
+          sys.exit(0 if res.wasSuccessful() else 1)
+          PY
+
+  # El simulador soporta SDL3 (actual) y SDL2 (paquete del sistema en LTS).
+  # Sin este job la ruta de respaldo se podria romper sin que nadie lo note.
+  sdl-matrix:
+    name: SDL${{ matrix.sdl }} compatibility
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        sdl: [2, 3]
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install SDL${{ matrix.sdl }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build gcc pkg-config libsdl2-dev
+          if [ "${{ matrix.sdl }}" = "3" ]; then
+            # SDL3 no esta en los repos de Ubuntu LTS: se construye el tag
+            # publicado. El simulador es headless: X11 y Wayland se desactivan
+            # explicitamente. UNIX_CONSOLE_BUILD solo no bastaba: el runner
+            # tiene X11 parcial y abortaba por falta del paquete XTEST.
+            A="bash tools/ci/annotate.sh"
+            $A "clone SDL3" git clone --depth 1 --branch release-3.4.20 \
+              https://github.com/libsdl-org/SDL.git /tmp/SDL3
+            $A "configure SDL3" cmake -S /tmp/SDL3 -B /tmp/SDL3-build -G Ninja \
+              -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/tmp/sdl3 \
+              -DSDL_SHARED=OFF -DSDL_STATIC=ON -DSDL_TESTS=OFF \
+              -DSDL_EXAMPLES=OFF -DSDL_UNIX_CONSOLE_BUILD=ON \
+              -DSDL_X11=OFF -DSDL_WAYLAND=OFF
+            $A "build SDL3" cmake --build /tmp/SDL3-build --parallel 2
+            $A "install SDL3" cmake --install /tmp/SDL3-build
+          fi
+      - name: Build and test against SDL${{ matrix.sdl }}
+        run: |
+          set -euo pipefail
+          extra=""
+          if [ "${{ matrix.sdl }}" = "3" ]; then
+            extra="-DCMAKE_PREFIX_PATH=/tmp/sdl3"
+          else
+            extra="-DGIGA_FORCE_SDL2=ON"
+          fi
+          cmake -S simulator -B build_sim -G Ninja -DCMAKE_BUILD_TYPE=Release $extra
+          cmake --build build_sim --parallel 2
+          SDL_VIDEODRIVER=dummy SDL_VIDEO_DRIVER=dummy \
+            ctest --test-dir build_sim --output-on-failure
+          cmake -S tests/host -B build_h -G Ninja -DCMAKE_BUILD_TYPE=Release $extra
+          cmake --build build_h --parallel 2
+          SDL_VIDEODRIVER=dummy SDL_VIDEO_DRIVER=dummy \
+            ctest --test-dir build_h --output-on-failure
+      - name: Bridge smoke test (SDL${{ matrix.sdl }})
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.sdl }}" = "3" ]; then
+            SDL3_PREFIX=/tmp/sdl3 bash tools/preview/build.sh
+          else
+            bash tools/preview/build.sh
+          fi

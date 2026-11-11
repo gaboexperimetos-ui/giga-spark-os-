@@ -1,40 +1,36 @@
-# Gigaspark OS - Simulador Nativo (SDL2)
-# Compilar: mkdir build && cd build && cmake .. && make
-# Ejecutar: ./gigaspark_sim
-
-cmake_minimum_required(VERSION 3.10)
+# Gigaspark OS - simulador nativo (SDL3 o SDL2)
+cmake_minimum_required(VERSION 3.20)
 project(gigaspark_sim C)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_C_EXTENSIONS OFF)
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
 
-# Buscar SDL2
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(SDL2 REQUIRED sdl2)
+# SDL3 si esta disponible; SDL2 como respaldo. Ver cmake/GigaSDL.cmake.
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../cmake")
+include(GigaSDL)
+if(NOT GIGA_SDL_FOUND)
+  message(FATAL_ERROR "Se necesita SDL3 o SDL2 (libsdl2-dev / SDL3 del sistema)")
+endif()
 
-# Fuentes del simulador
-set(SOURCES
-    main.c
-    sdk_stubs.c
-)
+add_executable(gigaspark_sim main.c)
+target_include_directories(gigaspark_sim PRIVATE ../common ../sdk ../common/include)
+target_include_directories(gigaspark_sim PRIVATE ${GIGA_SDL_EXTRA_INCLUDES})
+target_compile_definitions(gigaspark_sim PRIVATE GSP_USE_SDL3=$<IF:$<EQUAL:${GIGA_SDL_MAJOR},3>,1,0>)
+target_link_libraries(gigaspark_sim PRIVATE ${GIGA_SDL_TARGET} m)
+if(GIGA_SDL_MAIN)
+  target_link_libraries(gigaspark_sim PRIVATE ${GIGA_SDL_MAIN})
+endif()
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(gigaspark_sim PRIVATE -Wall -Wextra -Werror)
+endif()
 
-add_executable(gigaspark_sim ${SOURCES})
-
-target_include_directories(gigaspark_sim PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/../sdk
-    ${CMAKE_CURRENT_SOURCE_DIR}/../common/include
-    ${SDL2_INCLUDE_DIRS}
-)
-
-target_link_libraries(gigaspark_sim
-    ${SDL2_LIBRARIES}
-    m
-)
-
-target_compile_options(gigaspark_sim PRIVATE
-    ${SDL2_CFLAGS_OTHER}
-    -Wall -Wextra -Werror
-)
-
-# Copiar ejecutable a la raiz del proyecto
-install(TARGETS gigaspark_sim DESTINATION ${CMAKE_CURRENT_SOURCE_DIR}/..)
+include(CTest)
+if(BUILD_TESTING)
+  add_test(NAME simulator_smoke COMMAND gigaspark_sim --smoke)
+  set_tests_properties(simulator_smoke PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_VIDEO_DRIVER=dummy")
+endif()
+install(TARGETS gigaspark_sim RUNTIME DESTINATION bin)

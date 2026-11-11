@@ -16,4 +16,5 @@ target_include_directories(app PRIVATE
 	${CMAKE_CURRENT_SOURCE_DIR}
 	${GIGASPARK_ROOT}/m4/src
 	${GIGASPARK_ROOT}/common/include
+	${GIGASPARK_ROOT}/common
 )

@@ -1,0 +1,80 @@
+cmake_minimum_required(VERSION 3.20)
+project(gigaspark_host_checks C)
+
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_C_EXTENSIONS OFF)
+option(GIGASPARK_SANITIZE "Enable address and undefined behavior sanitizers" OFF)
+option(GIGASPARK_STRICT_WARNINGS "Treat warnings as errors (disable for old baselines)" ON)
+set(GIGASPARK_CORE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../m4/src" CACHE PATH "Memory/RLE sources")
+set(GIGASPARK_SIM_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../simulator" CACHE PATH "Simulator source directory")
+
+add_library(gigaspark_warnings INTERFACE)
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(gigaspark_warnings INTERFACE -Wall -Wextra)
+  if(GIGASPARK_STRICT_WARNINGS)
+    target_compile_options(gigaspark_warnings INTERFACE -Werror)
+  endif()
+  if(GIGASPARK_SANITIZE)
+    target_compile_options(gigaspark_warnings INTERFACE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(gigaspark_warnings INTERFACE -fsanitize=address,undefined)
+  endif()
+endif()
+
+add_library(gigaspark_core STATIC
+  ${GIGASPARK_CORE_DIR}/mem_engine.c
+  ${GIGASPARK_CORE_DIR}/zram_comp.c)
+target_include_directories(gigaspark_core PUBLIC
+${GIGASPARK_CORE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/support ${CMAKE_CURRENT_SOURCE_DIR}/../../common)
+target_link_libraries(gigaspark_core PRIVATE gigaspark_warnings)
+if(GIGASPARK_STRICT_WARNINGS AND CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(gigaspark_core PRIVATE -Wconversion -Wshadow)
+endif()
+
+include(CTest)
+if(BUILD_TESTING)
+  foreach(test test_mem_engine test_zram_comp test_framebuffer)
+    add_executable(${test} ${test}.c)
+    target_link_libraries(${test} PRIVATE gigaspark_warnings)
+    target_include_directories(${test} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../common)
+    if(test STREQUAL "test_zram_comp")
+      target_include_directories(${test} PRIVATE ${GIGASPARK_CORE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/support ${CMAKE_CURRENT_SOURCE_DIR}/../../common)
+    elseif(NOT test STREQUAL "test_framebuffer")
+      target_link_libraries(${test} PRIVATE gigaspark_core)
+    endif()
+    add_test(NAME ${test} COMMAND ${test})
+  endforeach()
+endif()
+add_executable(core_bench ../bench/core_bench.c)
+target_link_libraries(core_bench PRIVATE gigaspark_core gigaspark_warnings)
+target_compile_definitions(core_bench PRIVATE _POSIX_C_SOURCE=200809L)
+
+# El benchmark incluye la unidad de dibujo real, no un renderer simulado.
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../cmake")
+include(GigaSDL)
+set(SDL2_FOUND ${GIGA_SDL_FOUND})   # nombre historico del guard de abajo
+if(SDL2_FOUND)
+  add_executable(sim_bench ../bench/sim_bench.c)
+  target_include_directories(sim_bench PRIVATE ${GIGASPARK_SIM_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../../common ${CMAKE_CURRENT_SOURCE_DIR}/../../common/include)
+  target_compile_definitions(sim_bench PRIVATE _POSIX_C_SOURCE=200809L)
+  target_link_libraries(sim_bench PRIVATE ${GIGA_SDL_TARGET})
+  target_include_directories(sim_bench PRIVATE ${GIGA_SDL_EXTRA_INCLUDES})
+  target_compile_definitions(sim_bench PRIVATE GSP_USE_SDL3=$<IF:$<EQUAL:${GIGA_SDL_MAJOR},3>,1,0>)
+  target_link_libraries(sim_bench PRIVATE gigaspark_warnings m)
+
+  # Regresion de la interfaz tactil: comprueba que cada boton dibujado tiene
+  # zona tactil y que el toque cambia el estado, no solo los pixeles.
+  #
+  # Bajo BUILD_TESTING porque incluye main.c y usa simbolos de la UI actual.
+  # compare.py construye un baseline antiguo con -DBUILD_TESTING=OFF: sin este
+  # guard intentaria compilar este test contra codigo que no tiene qs_open.
+  if(BUILD_TESTING)
+  add_executable(test_sim_ui test_sim_ui.c)
+  target_include_directories(test_sim_ui PRIVATE ${GIGASPARK_SIM_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../../common ${CMAKE_CURRENT_SOURCE_DIR}/../../common/include)
+  target_link_libraries(test_sim_ui PRIVATE ${GIGA_SDL_TARGET})
+  target_include_directories(test_sim_ui PRIVATE ${GIGA_SDL_EXTRA_INCLUDES})
+  target_compile_definitions(test_sim_ui PRIVATE GSP_USE_SDL3=$<IF:$<EQUAL:${GIGA_SDL_MAJOR},3>,1,0>)
+  target_link_libraries(test_sim_ui PRIVATE gigaspark_warnings m)
+  add_test(NAME test_sim_ui COMMAND test_sim_ui)
+  endif()
+endif()
