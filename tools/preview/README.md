@@ -1,12 +1,13 @@
 # Preview web del simulador C
 
-Expone el simulador SDL2 real (`simulator/main.c`) en el navegador, sin necesidad
-de servidor X. El puente reutiliza el código C tal cual: incluye `main.c` renombrando
-su `main`, y llama a `render_screen()` y `handle_event()` directamente.
+Expone el simulador SDL real (`simulator/main.c`) en el navegador, sin necesidad
+de servidor X. Usa SDL3 si está disponible y conserva SDL2 como respaldo. El
+puente incluye `main.c` renombrando su `main`, y llama al `render_screen()` y a
+`handle_event()` reales; el núcleo de ambos está en `common/ui_os.c`.
 
 ## Arrancar
 
-Si ya hay SDL2 y CMake disponibles:
+Si ya hay SDL3 o SDL2 y CMake disponibles:
 
 ```bash
 bash tools/preview/build.sh          # compila build_preview/bridge + smoke test
@@ -17,7 +18,7 @@ Si el entorno perdió las dependencias (típico tras un snapshot), un solo coman
 las reconstruye y compila el puente:
 
 ```bash
-bash tools/preview/bootstrap.sh      # CMake + Ninja + SDL2 + puente
+bash tools/preview/bootstrap.sh      # CMake + Ninja + SDL3 + SDL2 + puente
 python3 tools/preview/server.py --port 8080
 ```
 
@@ -32,9 +33,9 @@ rutas relativas, así que funciona detrás del proxy de la plataforma.
 
 | Variable | Efecto |
 |---|---|
-| `SDL2_PREFIX` | Prefijo de SDL2 a usar; tiene prioridad sobre pkg-config y PATH |
+| `SDL3_PREFIX` / `SDL2_PREFIX` | Prefijo SDL a usar, con prioridad sobre pkg-config |
 | `GIGA_BUILD_DIR` | Directorio de salida del puente (por defecto `build_preview/`) |
-| `GIGA_DEPS_PREFIX` | Dónde vive/construir SDL2 (por defecto `~/.cache/giga-deps`) |
+| `GIGA_DEPS_PREFIX` | Dónde viven/construir SDL2 y SDL3 (por defecto `~/.cache/giga-deps`) |
 | `GIGA_TOOLS_PREFIX` | Dónde instalar CMake/Ninja (por defecto `~/.cache/giga-tools`) |
 
 Las dos últimas permiten probar el bootstrap en un prefijo aislado sin pisar el
@@ -67,9 +68,9 @@ reescribirlo a mano. Ahora:
 - `tools/preview/build.sh` — build reproducible, versionado.
 - `build_preview/bridge` — binario generado, ignorado (correcto).
 
-`build.sh` busca SDL2 en este orden: `pkg-config`, `sdl2-config` en PATH, y por
-último el prefijo local `~/.cache/giga-deps/install`. Añade el padre de
-`includedir` porque `main.c` incluye `<SDL2/SDL.h>`, no `<SDL.h>`.
+`build.sh` busca SDL3 primero (`SDL3_PREFIX`, `pkg-config sdl3`, prefijo local
+`install3`) y después SDL2 (`SDL2_PREFIX`, `pkg-config sdl2`, `sdl2-config` o
+`install`). `sdl_compat.h` adapta las diferencias de API.
 
 ## Protocolo
 
@@ -110,8 +111,9 @@ verde y solo se vieron renderizando a PNG.
 `handle_event()` fija plazos con `SDL_GetTicks()` (resaltado de pulsación de
 110 ms, fin del escaneo WiFi). El puente debe usar **el mismo reloj** y expirar
 esos estados; si mide el tiempo con `CLOCK_MONOTONIC` aparte, el botón pulsado se
-queda resaltado para siempre. Por eso inicializa `SDL_INIT_TIMER` y usa
-`SDL_GetTicks()`.
+queda resaltado para siempre. El puente usa `gsp_ticks()` de la capa SDL común. `GSP_INIT_TIMER` se traduce a
+`SDL_INIT_TIMER` en SDL2 y a cero en SDL3, donde el reloj no necesita inicializar
+un subsistema aparte.
 
 ## Interfaz Material Design 3
 
@@ -137,5 +139,5 @@ los incluyas en `EXTRA` y regeneres: sin eso la UI muestra `?` en su lugar.
 Renderiza el simulador tal como está hoy: **800×480**, el modo landscape del GIGA
 Display Shield real (480×800 nativo, ST7701 por DSI, táctil GT911). Objetivos
 táctiles de **80–96 px** = 8.6–10.4 mm en el panel real. Ver
-`docs/HARDWARE_FIDELITY.md`. Este preview no mide rendimiento ni valida hardware:
-el firmware no se compila en este entorno.
+`docs/HARDWARE_FIDELITY.md`. Este preview no mide rendimiento ni valida el
+encendido/timing del hardware físico. El CI sí compila el firmware M7/M4.

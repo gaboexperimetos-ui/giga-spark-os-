@@ -13,5 +13,6 @@ contact_links:
   - name: Versiones de la stack y qué está verificado
     url: https://github.com/gaboexperimetos-ui/giga-spark-os-/blob/main/docs/VERSIONS.md
     about: |
-      Qué versión de Zephyr, SDL y Actions usamos, y qué NO se ha podido
-      verificar (el firmware no se compila sin workspace Zephyr ni SDK ARM).
+      Qué versiones de Zephyr, SDL y Actions usamos, y qué no se ha podido
+      verificar (la compilación ARM está en CI; encendido y timings requieren
+      probar una placa GIGA Display Shield).

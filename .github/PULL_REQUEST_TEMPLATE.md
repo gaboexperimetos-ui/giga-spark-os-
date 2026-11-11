@@ -46,8 +46,8 @@ botones invisibles y texto tapado por controles. Adjunta imágenes.
 ## Límites de esta PR
 
 <!--
-Qué NO se pudo verificar y por qué. Escribir "el firmware no se compiló porque
-no hay workspace Zephyr aquí" es mucho más útil que dejarlo en silencio.
+Qué NO se pudo verificar y por qué. El CI sí compila M7/M4; si no hubo
+workspace local, indícalo, y separa eso de la prueba física que aún requiera placa.
 -->
 
 ## Issues relacionados

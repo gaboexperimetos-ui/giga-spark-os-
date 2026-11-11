@@ -7,41 +7,38 @@ el 2026-11-07, no se copiaron de memoria.
 |---|---|---|---|
 | Zephyr RTOS | 4.4.1 (solo en el README) | **4.5.0** | `west.yml` |
 | Zephyr SDK | `gcc-arm-none-eabi` de apt | **1.0.1** (`arm-zephyr-eabi`) | `.github/workflows/build.yml` |
-| Python | sin fijar | **3.13** (mínimo 3.12) | `.github/workflows/build.yml` |
+| Python | sin fijar | **3.15.2** (workflow `3.15`, mínimo 3.12) | `.github/workflows/build.yml` |
 | SDL | SDL2, commit suelto | **SDL3 3.4.20**, SDL2 **2.32.10** de respaldo | `simulator/sdl_compat.h`, `bootstrap.sh` |
+| CMake | sin fijar | **4.4.5** (runner; mínimo del proyecto 3.20) | runner / `CMakeLists.txt` |
+| Ninja | sin fijar | **1.13.2** (runner) | runner |
 | actions/checkout | v4 | **v7** | `.github/workflows/build.yml` |
 | actions/upload-artifact | v4 | **v7** | `.github/workflows/build.yml` |
 | actions/setup-python | no se usaba | **v7** | `.github/workflows/build.yml` |
-| LVGL | "9.5.0" escrito a mano | la revisión del manifiesto de Zephyr | `west.yml` (import) |
+| LVGL | "9.5.0" escrito a mano | **eliminado** (render propio en RGB565) | `common/ui_os.c` |
 
-## El CI de firmware nunca pudo funcionar
+## CI de firmware: estado actual
 
-Faltaba `west.yml`. Los jobs ejecutaban `west init -l .` y `west update`, que
-**requieren** un manifiesto: sin él fallan siempre. Además instalaban
-`gcc-arm-none-eabi` de apt, que no es el toolchain que Zephyr espera (usa
-`arm-zephyr-eabi` del SDK, con picolibc).
+El fallo original era que faltaba `west.yml`; `west init -l .` lo requiere.
+Ahora el manifiesto fija Zephyr `v4.5.0` y limita los imports a los ocho módulos
+usados: `cmsis_6`, `cmsis`, `hal_stm32`, `open-amp`, `libmetal`, `fatfs`,
+`mbedtls` y `picolibc`. El checker de lint valida los nombres contra los 81
+proyectos del manifiesto upstream: `west` ignora en silencio un nombre erróneo.
 
-Ahora `west.yml` fija Zephyr `v4.5.0` e importa solo los módulos que este proyecto
-usa. Los 8 nombres del `name-allowlist` se validaron contra el manifiesto real de
-Zephyr 4.5.0 (81 proyectos): un nombre inexistente rompe `west update`.
+El CI instala el SDK de Zephyr 1.0.1 (`arm-zephyr-eabi`), no el `gcc-arm-none-eabi`
+de apt. También instala `pkg-config`, libusb y libudev porque `hidapi` no publica
+wheel para Python 3.15 y se compila desde fuentes. El check del manifiesto usa
+`GITHUB_TOKEN` para no topar con el rate limit anónimo de la API.
 
-```
-cmsis  cmsis-dsp  hal_stm32  open-amp  libmetal  lvgl  mbedtls  picolibc
-```
+**Estado actual:** PR #1, run `42721414186`, 8/8 jobs SUCCESS: lint, host tests,
+native_sim, M4, M7, SDL2, SDL3 y simulador. El job M7 publica `zephyr.bin` y
+`zephyr.elf`; el ZIP de artefactos completo pesa 2 818 374 bytes (la ejecución
+de referencia anterior pesaba 2 496 045; el ZIP no es el tamaño del binario).
 
-Importar el manifiesto completo descarga decenas de HALs de otros fabricantes
-(>1 GB) sin aportar nada a un STM32H747.
-
-**LVGL no se fija a mano.** Zephyr arrastra su propio pin
-(`modules/lib/gui/lvgl`); sobrescribirlo rompe la integración de display. El
-README decía "9.5.0" sin respaldo: ese pin no expone un `lv_version.h` legible, así
-que se documenta como "la revisión del manifiesto" en vez de inventar un número.
-
-**Esto no está verificado en hardware ni compilado aquí.** No hay workspace de
-Zephyr ni toolchain ARM en este entorno. Lo que sí se comprobó: los nombres de
-board existen en 4.5.0 (`board.yml`: `arduino_giga_r1` / `stm32h747xx`), los assets
-del SDK 1.0.1 existen, `zephyr-env.sh` sigue presente y el YAML es válido. La
-primida ejecución real del CI es la prueba que falta.
+**LVGL ya no se usa ni se importa.** Su único consumidor era `m7/src/ui_manager.c`,
+código muerto que no se compilaba y mezclaba API de v8 y v9. Se eliminó junto con
+el módulo del manifiesto. El firmware y el simulador usan el mismo render propio
+RGB565 (`common/ui_os.c` + `common/ui_material.c`); el backend de panel es
+`m7/src/display_giga.c`. No queda ningún pin de LVGL que mantener.
 
 ## SDL3 con respaldo en SDL2
 
@@ -92,18 +89,17 @@ sirve por HTTP).
 
 ## Tema visual compartido
 
-`common/include/ui_theme.h` es ahora la fuente única del color para el firmware
-LVGL y el simulador. Antes cada uno tenía literales propios: el firmware una
-paleta retro (`0x1a1a2e` / `0xe94560`) y el simulador otra, así que lo visto en el
-PC no era lo que saldría en el Arduino.
+`common/include/ui_theme.h` es la fuente única del color para el firmware y el
+simulador (ambos usan el mismo núcleo `common/ui_os.c`). La extracción del núcleo
+eliminó la posibilidad de que la paleta del panel y la de escritorio diverjan.
 
 Los tonos se definen en RGB888 y `UI_RGB565()` cuantiza **redondeando**. Truncar
 desplaza el tono en superficies oscuras: `0x263036` truncado daba (33,48,49), con
 verde==azul y las tarjetas se veían verdosas; redondeando da (41,48,57).
 
-**Aviso honesto:** `m7/src/launcher.c` **no está en `target_sources`** del
-`CMakeLists.txt` raíz y nadie llama a sus funciones: es código muerto. Alinear su
-paleta lo deja coherente, pero **no cambia lo que dibuja el firmware hoy**.
+**Alcance:** el antiguo `m7/src/launcher.c` y `ui_manager.c` se eliminaron: no
+estaban en `target_sources` y no tenían consumidores. El panel real ahora usa
+`m7/src/display_giga.c` y el núcleo compartido `common/ui_os.c`.
 
 ## Lo que no se pudo actualizar
 

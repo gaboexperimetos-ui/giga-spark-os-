@@ -50,7 +50,7 @@ control del hardware:
   desechable**. Escucha en `0.0.0.0` a propósito y no tiene autenticación: no lo
   expongas a Internet. Que falte auth ahí es una decisión de diseño, no un bug.
 - Ataques que requieran acceso físico a la placa o al bus de depuración SWD.
-- Vulnerabilidades en Zephyr, LVGL o SDL: repórtalas a sus propios proyectos. Si
+- Vulnerabilidades en Zephyr o SDL: repórtalas a sus propios proyectos. Si
   afecta a la versión que fijamos en `west.yml`, avísanos para actualizar el pin.
 
 ## Verificación que ya hacemos

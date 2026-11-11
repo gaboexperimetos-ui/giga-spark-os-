@@ -1,8 +1,8 @@
-# Gigaspark OS - Simulador Nativo (SDL2)
+# Gigaspark OS — Simulador nativo (SDL3 / SDL2)
 
 ## Que es el Simulador
 
-El simulador permite ejecutar apps de Gigaspark OS en tu PC sin necesidad del hardware fisico. Usa SDL2 para crear una ventana de **800x480** (escala 1:1) y el raton funciona como pantalla tactil.
+El simulador permite ejecutar apps de Gigaspark OS en tu PC sin necesidad del hardware fisico. Usa SDL3 (con compatibilidad SDL2) para crear una ventana de **800x480** (escala 1:1) y el raton funciona como pantalla tactil.
 
 > **Geometria:** el lienzo es **800x480**, el modo landscape del Giga Display Shield real (ASX00039): panel de 3.97" con **480x800** nativo, controlador **ST7701** por MIPI DSI y tactil **Goodix GT911**. Antes era 480x272, una resolucion que no corresponde a ningun panel de este shield; ya esta migrada. Fuentes y calculos en [HARDWARE_FIDELITY.md](HARDWARE_FIDELITY.md).
 
@@ -13,18 +13,22 @@ cobertura de 4 bits en `common/include/roboto_font.h`), superficies tonales elev
 switches de pastilla, chips, slider y **barra de navegacion de 3 botones**
 (atras / inicio / recientes) abajo, con barra de estado arriba y app bar.
 
-La capa de dibujo esta en `common/ui_material.c`: mezcla con alfa en RGB565,
+El núcleo de interfaz está en `common/ui_os.c` y es portable: lo usan el
+simulador y el firmware del M7. La capa de dibujo está en `common/ui_material.c`: mezcla con alfa en RGB565,
 rectangulos redondeados y circulos antialiasados, iconos de trazo grueso y
 widgets M3. Roboto es de Google, licencia SIL OFL 1.1
 (`simulator/fonts/OFL-Roboto.txt`); el atlas se regenera con
 `tools/ui/gen_font.py`.
 
-**El brillo es retroiluminacion, no contenido.** En el panel real el brillo es el
-PWM de la retroiluminacion: escala la luz emitida, no los valores RGB565.
+**El brillo es retroiluminación, no contenido.** En el panel real la señal de
+retroiluminación es SWIRE (no PWM): el simulador modela la luz emitida,
+no altera los valores RGB565. El protocolo SWIRE aún no se implementa en firmware.
 Atenuar dentro del framebuffer obligaba a recuantizar tonos ya oscuros y el gris
 viraba a verde (una tarjeta pasaba de (33,36,41) a (24,32,33), con verde==azul).
 Ahora `render_screen()` deja el framebuffer intacto a cualquier brillo y
-`backlight_scale()` entrega el factor para aplicarlo con 8 bits por canal.
+`backlight_scale()` entrega el factor para que cada backend modele la luz por
+separado. El hardware usa SWIRE en PB12; el protocolo físico de brillo queda
+pendiente.
 
 ### Diseno tactil
 
@@ -39,8 +43,9 @@ tamano de los botones en una cuestion fisica, no estetica:
 | 96 px | 10.4 mm | comodo |
 
 Todo objetivo tactil mide **>= 80 px** en su lado menor, y un test lo comprueba en
-las 7 pantallas (`tests/host/test_sim_ui.c`). El layout reserva 56 px de barra de
-estado y un riel lateral de 96 px (ATRAS / HOME / MENU) siempre alcanzable.
+las 7 pantallas (`tests/host/test_sim_ui.c`). El layout es el cromo de Android:
+36 px de barra de estado, 80 px de app bar, 284 px de contenido y 80 px de barra
+de navegación inferior (ATRÁS / HOME / RECIENTES). 36 + 80 + 284 + 80 = 480.
 
 **Dibujo y toque no pueden separarse:** `btn()` dibuja el boton y registra su zona
 tactil en la misma llamada (`hit_add`). Antes se dibujaban botones sin zona, asi
@@ -52,12 +57,14 @@ hagan nada.
 
 ### Linux (CachyOS/Arch)
 ```bash
-sudo pacman -S sdl2 gcc make pkgconf
+sudo pacman -S sdl3 gcc make pkgconf
+# SDL2 también está soportado: sudo pacman -S sdl2
 ```
 
 ### Linux (Ubuntu/Debian)
 ```bash
-sudo apt install libsdl2-dev gcc make pkg-config
+sudo apt install libsdl3-dev gcc make pkg-config
+# Si la distro no empaqueta SDL3: libsdl2-dev (compatibilidad mantenida)
 ```
 
 ### macOS
@@ -82,33 +89,35 @@ make
 
 ### Opcion 2: CMake
 ```bash
-cd simulator
-mkdir build && cd build
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build
-./build/gigaspark_sim
+cmake -S simulator -B build_simulator -DCMAKE_BUILD_TYPE=Release
+cmake --build build_simulator
+./build_simulator/gigaspark_sim
 ```
 
 ### Prueba automatica sin ventana
 
 ```bash
-SDL_VIDEODRIVER=dummy ./build/gigaspark_sim --smoke
-# Con Make:
+SDL_VIDEODRIVER=dummy SDL_VIDEO_DRIVER=dummy ./build_simulator/gigaspark_sim --smoke
+# Con Make (desde simulator/):
 make test
 ```
 
 Las pantallas estaticas solo se redibujan con entrada, cambio de reloj o bateria. El bucle duerme en lugar de renderizar 30 FPS continuamente. Las animaciones de osciloscopio y RF mantienen el limite de 30 FPS.
 
-### Opcion 3: Compilar manualmente
+### SDL2 explícito
+
+Si no tienes SDL3, `make` detecta SDL2 automáticamente. También puedes forzarlo:
+
 ```bash
 cd simulator
-gcc -std=c11 -Wall -Wextra -O2 \
-    -I../sdk -I../common/include \
-    $(pkg-config --cflags sdl2) \
-    -o gigaspark_sim main.c sdk_stubs.c \
-    $(pkg-config --libs sdl2) -lm
+make clean
+make SDL=2
 ./gigaspark_sim
 ```
+
+Para una instalación fuera de las rutas del sistema, usa `SDL_PREFIX=/ruta`.
+El Makefile y `tools/preview/build.sh` son la ruta recomendada; así se conserva
+la selección correcta de SDL2/SDL3 y sus flags de enlace.
 
 ## Controles
 
@@ -125,24 +134,28 @@ gcc -std=c11 -Wall -Wextra -O2 \
 
 ```
 simulator/
-├── main.c           # SDL2: ventana, framebuffer, touch, launcher
-├── sdk_stubs.c      # Implementaciones PC de las funciones del SDK
+├── main.c           # Backend SDL: ventana, eventos y reloj
+├── sdl_compat.h     # Compatibilidad SDL2/SDL3
 ├── CMakeLists.txt   # Build system CMake
 └── Makefile         # Build system simple
+common/
+├── ui_os.c          # Núcleo UI portable: render, hit-test, acciones
+├── ui_material.c    # Primitivas y widgets Material
+└── include/         # Tema, framebuffer y atlas Roboto
 ```
 
 ### Componentes
 
 1. **Framebuffer** (`fb`): Array 800x480 de uint16_t (RGB565), 768000 bytes. Tanto el formato como la resolucion coinciden con el panel real en landscape.
-2. **SDK API Table**: Tabla de funciones en `sdk_stubs.c` que implementa `fill_rect`, `draw_text`, `get_touch`, etc. usando SDL2.
-3. **Launcher**: Menu interactivo que muestra la lista de apps del sistema.
-4. **Touch**: El raton de la PC simula el touchscreen (click = toque).
+2. **Núcleo portable**: `common/ui_os.c` renderiza y registra zonas táctiles; lo comparte el firmware.
+3. **Widgets Material**: `common/ui_material.c`, Roboto y tema RGB565.
+4. **Touch**: el ratón de la PC simula el panel (click = toque); en hardware, GT911.
 
 ### Diferencias con el Hardware Real
 
 | Caracteristica | Hardware (STM32) | Simulador (PC) |
 |---------------|------------------|----------------|
-| Pantalla | 480x800 nativo, ST7701 via MIPI DSI | Ventana SDL2 800x480 (landscape, 1:1) |
+| Pantalla | 480x800 nativo, ST7701 por DSI vía LTDC | Ventana SDL 800x480 (landscape, 1:1) |
 | Touch | Capacitivo Goodix GT911, 5 puntos | Raton (1 punto) |
 | CPU | Cortex-M7 480MHz | x86/ARM PC |
 | Memoria | 1 MB RAM + 8 MB SDRAM externa | Ilimitada |

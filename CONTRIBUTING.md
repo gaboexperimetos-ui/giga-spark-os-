@@ -112,8 +112,9 @@ Están documentadas porque volver a caer en ellas es fácil:
 - **Cuantiza RGB565 redondeando, nunca truncando.** En tonos oscuros truncar
   desplaza el tono: `0x263036` truncado daba verde==azul y las tarjetas se veían
   verdosas. Usa `UI_RGB565()` de `common/include/ui_theme.h`.
-- **El brillo no toca el framebuffer.** Es la retroiluminación (PWM). Atenuar
-  dentro del RGB565 recuantiza y vuelve a virar el color.
+- **El brillo no toca el framebuffer.** La placa usa SWIRE en PB12 (no PWM).
+  Atenuar dentro del RGB565 recuantiza y vuelve a virar el color; el protocolo
+  SWIRE físico aún no está implementado.
 - **Objetivos táctiles ≥ 80 px.** El panel real tiene 235 ppi: 80 px = 8.65 mm.
   48 px son 5.2 mm, imposibles de acertar con el dedo. Hay un test que lo comprueba.
 - **Dibujo y zona táctil van juntos.** Los widgets registran su `hit_add` en la

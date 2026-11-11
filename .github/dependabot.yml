@@ -4,7 +4,7 @@
 # actions/checkout@v4 y nadie lo vio hasta revisar las anotaciones del run.
 # Las Actions envejecen solas; esto abre la PR cuando hay version nueva.
 #
-# Solo se vigila github-actions. Las dependencias de firmware (Zephyr, LVGL,
+# Solo se vigila github-actions. Las dependencias de firmware (Zephyr,
 # HAL de ST) las fija west.yml y las arrastra el manifiesto de Zephyr: cambiar
 # esos pins por separado rompe la integracion que Zephyr prueba en conjunto.
 # Subir Zephyr es una decision deliberada, no un bump automatico.

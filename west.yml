@@ -1,17 +1,11 @@
 # Gigaspark OS - manifiesto de west
 #
-# Este fichero FALTABA. El CI ejecutaba `west init -l .` y `west update`, que
-# requieren un manifiesto: sin el, ambos fallan y los jobs de firmware nunca
-# pudieron compilar. Ahora el workspace es reproducible.
+# Este manifiesto hace reproducible el workspace Zephyr. Antes faltaba y los
+# jobs no podían superar `west init -l .`; hoy M7/M4 compilan en CI.
 #
 # Zephyr 4.5.0 (2026-10-28) es la ultima version estable publicada.
-# Se importa el manifiesto de Zephyr para arrastrar sus modulos (HAL de ST,
-# open-amp, libmetal y LVGL) en las revisiones que esa version prueba en conjunto.
-#
-# LVGL NO se importa: la interfaz se dibuja con un render propio en RGB565
-# (common/ui_os.c + ui_material.c), que es el mismo codigo en el simulador y en
-# la placa. Antes lo usaba m7/src/ui_manager.c, que era codigo muerto sin
-# compilar y mezclaba API de LVGL v8 y v9; se elimino.
+# Se importan solo los modulos necesarios (HAL de ST, IPC, filesystem y libc).
+# LVGL ya no se usa: la interfaz Material es un render RGB565 portable.
 #
 # SDK: Zephyr 4.5.0 declara SDK_VERSION 1.0.1 (ver fichero SDK_VERSION del repo).
 # Python: Zephyr 4.5.0 exige >= 3.12 (cmake/modules/python.cmake).
