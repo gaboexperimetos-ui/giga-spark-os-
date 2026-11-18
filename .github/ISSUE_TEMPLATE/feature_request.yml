@@ -1,0 +1,56 @@
+name: Propuesta de mejora
+description: Sugiere una función o un cambio
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problema
+    attributes:
+      label: Qué problema resuelve
+      description: |
+        Empieza por la necesidad, no por la solución. "Quiero un botón X" es
+        menos útil que "no puedo hacer Y sin salir de la app".
+      placeholder: Para medir señales lentas tengo que cambiar la base de tiempo muchas veces.
+    validations:
+      required: true
+
+  - type: textarea
+    id: propuesta
+    attributes:
+      label: Qué propones
+      placeholder: Un modo de disparo automático que congele la traza al detectar un flanco.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Dónde encaja
+      options:
+        - Interfaz del simulador
+        - Firmware M7
+        - Firmware M4
+        - Núcleo C / memoria
+        - SDK para apps de terceros
+        - Herramientas de build o preview
+        - Documentación
+        - No lo sé
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternativas
+    attributes:
+      label: Alternativas que consideraste
+      description: Incluye "no hacer nada" si es razonable.
+
+  - type: checkboxes
+    id: restricciones
+    attributes:
+      label: Restricciones del proyecto a tener en cuenta
+      description: |
+        La pantalla es 800×480 y **táctil**: todo objetivo debe medir ≥ 80 px
+        (8.65 mm en el panel real de 235 ppi). El diseño es Material Design 3.
+      options:
+        - label: Mi propuesta respeta los objetivos táctiles de ≥ 80 px
+        - label: Requiere hardware que no está en la GIGA Display Shield
+        - label: Estaría dispuesto a implementarla

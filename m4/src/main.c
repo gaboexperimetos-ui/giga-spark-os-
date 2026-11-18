@@ -43,13 +43,12 @@ struct cmd_item {
 };
 
 /* Message queues */
-K_MSGQ_DEFINE(cmd_msgq, sizeof(struct cmd_item), CMD_QUEUE_SIZE, 1);
-K_MSGQ_DEFINE(resp_msgq, sizeof(struct ipc_msg), CMD_QUEUE_SIZE, 1);
+K_MSGQ_DEFINE(cmd_msgq, sizeof(struct cmd_item), CMD_QUEUE_SIZE, 4);
+K_MSGQ_DEFINE(resp_msgq, sizeof(struct ipc_msg), CMD_QUEUE_SIZE, 4);
 
 /* Semaphores */
 static K_SEM_DEFINE(bound_sem, 0, 1);
-static K_SEM_DEFINE(cmd_sem, 0, CMD_QUEUE_SIZE);
-static K_SEM_DEFINE(resp_sem, 0, CMD_QUEUE_SIZE);
+static K_SEM_DEFINE(init_sem, 0, 1);
 
 /* IPC endpoint */
 static struct ipc_ept ept;
@@ -91,8 +90,6 @@ static void ept_received(const void *data, size_t len, void *priv)
 		return;
 	}
 
-	/* Signal the mem_engine thread */
-	k_sem_give(&cmd_sem);
 }
 
 /* IPC endpoint configuration */
@@ -138,11 +135,9 @@ static void ipc_listener_thread(void *p1, void *p2, void *p3)
 
 	/* Main loop: send responses that mem_engine has prepared */
 	while (1) {
-		/* Wait for mem_engine to signal a response is ready */
-		k_sem_take(&resp_sem, K_FOREVER);
-
 		struct ipc_msg resp;
-		if (k_msgq_get(&resp_msgq, &resp, K_NO_WAIT) == 0) {
+		/* The message queue already provides blocking wait + synchronization. */
+		if (k_msgq_get(&resp_msgq, &resp, K_FOREVER) == 0) {
 			ret = ipc_service_send(&ept, &resp, sizeof(resp));
 			if (ret < 0) {
 				LOG_ERR("Failed to send response: %d", ret);
@@ -173,7 +168,7 @@ static void process_command(const struct ipc_msg *req, struct ipc_msg *resp)
 			       ? STATUS_OK : STATUS_ERR_NOMEM;
 		resp->handle = handle;
 		resp->size = req->size;
-		LOG_INF("CMD_ALLOC size=%u -> handle=0x%04x", req->size, handle);
+		LOG_DBG("CMD_ALLOC size=%u -> handle=0x%04x", req->size, handle);
 		break;
 	}
 	case CMD_FREE: {
@@ -181,7 +176,7 @@ static void process_command(const struct ipc_msg *req, struct ipc_msg *resp)
 		resp->status = (ret == 0) ? STATUS_OK : STATUS_ERR_BAD_HANDLE;
 		resp->handle = req->handle;
 		resp->size = 0;
-		LOG_INF("CMD_FREE handle=0x%04x -> %d", req->handle, ret);
+		LOG_DBG("CMD_FREE handle=0x%04x -> %d", req->handle, ret);
 		break;
 	}
 	case CMD_READ: {
@@ -193,7 +188,7 @@ static void process_command(const struct ipc_msg *req, struct ipc_msg *resp)
 		resp->handle = req->handle;
 		resp->size = actual;
 		resp->status = (actual > 0) ? STATUS_OK : STATUS_ERR_READ_FAILED;
-		LOG_INF("CMD_READ handle=0x%04x -> %u bytes", req->handle, actual);
+		LOG_DBG("CMD_READ handle=0x%04x -> %u bytes", req->handle, actual);
 		break;
 	}
 	case CMD_WRITE: {
@@ -201,7 +196,7 @@ static void process_command(const struct ipc_msg *req, struct ipc_msg *resp)
 		resp->status = (ret == 0) ? STATUS_OK : STATUS_ERR_WRITE_FAILED;
 		resp->handle = req->handle;
 		resp->size = 0;
-		LOG_INF("CMD_WRITE handle=0x%04x -> %d", req->handle, ret);
+		LOG_DBG("CMD_WRITE handle=0x%04x -> %d", req->handle, ret);
 		break;
 	}
 	case CMD_GET_APP_LIST: {
@@ -357,17 +352,13 @@ static void mem_engine_thread(void *p1, void *p2, void *p3)
 	struct ipc_msg resp;
 	int ret;
 
+	LOG_INF("Memory Engine thread waiting for initialization...");
+	k_sem_take(&init_sem, K_FOREVER);
 	LOG_INF("Memory Engine thread starting...");
 
 	while (1) {
-		/* Block until a command arrives in the queue */
-		ret = k_sem_take(&cmd_sem, K_FOREVER);
-		if (ret != 0) {
-			continue;
-		}
-
-		/* Get the command from the queue */
-		ret = k_msgq_get(&cmd_msgq, &item, K_NO_WAIT);
+		/* Block directly on the queue; no duplicate semaphore wakeup. */
+		ret = k_msgq_get(&cmd_msgq, &item, K_FOREVER);
 		if (ret != 0) {
 			continue;
 		}
@@ -384,8 +375,6 @@ static void mem_engine_thread(void *p1, void *p2, void *p3)
 			continue;
 		}
 
-		/* Signal the IPC listener to send the response */
-		k_sem_give(&resp_sem);
 	}
 }
 
@@ -418,6 +407,7 @@ int main(void)
 		LOG_INF("Filesystem ready, %d app(s) found", fs_get_app_count());
 	}
 
+	k_sem_give(&init_sem);
 	LOG_INF("M4 subsystems initialized. Threads are now running.");
 	LOG_INF("  ipc_listener: tid=%d, prio=5 (HIGH)", (int)ipc_listener_tid);
 	LOG_INF("  mem_engine:   tid=%d, prio=7 (MEDIUM)", (int)mem_engine_tid);

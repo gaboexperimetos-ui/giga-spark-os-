@@ -116,6 +116,7 @@ enter_dfu() {
 build_firmware() {
     echo -e "${CYAN}[*] Compilando firmware...${NC}"
 
+    # shellcheck source=/dev/null
     source ~/.venvs/zephyr/bin/activate 2>/dev/null || true
     export ZEPHYR_BASE=~/zephyr-ws/zephyr
 
@@ -156,6 +157,7 @@ flash_m4_dfu() {
 flash_west() {
     echo -e "${CYAN}[*] Flasheando via west (OpenOCD/ST-Link)...${NC}"
 
+    # shellcheck source=/dev/null
     source ~/.venvs/zephyr/bin/activate 2>/dev/null || true
     export ZEPHYR_BASE=~/zephyr-ws/zephyr
 

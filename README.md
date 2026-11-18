@@ -2,12 +2,12 @@
 
 > **Un sistema operativo dual-core que convierte al Arduino Giga R1 en una navaja suiza de la ingeniería.**
 
+[![CI](https://github.com/gaboexperimetos-ui/giga-spark-os-/actions/workflows/build.yml/badge.svg)](https://github.com/gaboexperimetos-ui/giga-spark-os-/actions/workflows/build.yml)
+[![License: MIT](https://img.shields.io/github/license/gaboexperimetos-ui/giga-spark-os-)](LICENSE)
 ![STM32H747](https://img.shields.io/badge/STM32H747-Dual--Core-blue)
-![Zephyr RTOS](https://img.shields.io/badge/Zephyr-RTOS-4.4.1-green)
-![C99](https://img.shields.io/badge/Language-C99-blue)
-![License](https://img.shields.io/badge/License-MIT-yellow)
-![Version](https://img.shields.io/badge/Version-1.0-red)
-![Build](https://img.shields.io/badge/Build-Passing-brightgreen)
+![Zephyr RTOS](https://img.shields.io/badge/Zephyr-4.5.0-green)
+![C11](https://img.shields.io/badge/Language-C11-blue)
+![SDL](https://img.shields.io/badge/SDL-3.4.20-orange)
 
 ---
 
@@ -61,10 +61,10 @@
 │ Thread 2: app_runner │ Thread 2: mem_engine          │
 │   (Prio 5, Apps)    │   (Prio 7, Memoria+FS)       │
 ├─────────────────────┼───────────────────────────────┤
-│ • LVGL GUI (9.5)    │ • 3-tier Memory Engine        │
+│ • GUI Material MD3  │ • 3-tier Memory Engine        │
 │ • Fault Recovery     │ • zRAM Compression (RLE)      │
 │ • Power Manager      │ • SD Swap (64 sectors)        │
-│ • Nav Bar (40px)     │ • FAT32 File System           │
+│ • Nav Bar (80px)     │ • FAT32 File System           │
 │ • Video Decoder      │ • Media File Read/Write       │
 │ • Audio I2S          │ • App Binary Loader           │
 │ • WiFi (stub)        │                               │
@@ -118,7 +118,8 @@ gigaspark_os/
 │   ├── CMakeLists.txt
 │   ├── prj.conf
 │   ├── src/
-│   │   ├── main.c                 # M7 main (2 threads)
+│   │   ├── main.c                 # M7 main y UI thread
+│   │   ├── display_giga.c/h       # LTDC + ST7701 + touch GT911
 │   │   ├── app_runner.c/h         # App execution + fault recovery
 │   │   ├── fault_manager.c/h      # PendSV + setjmp/longjmp
 │   │   ├── nav_bar.c/h            # Android-style nav bar
@@ -137,7 +138,12 @@ gigaspark_os/
 │   ├── gigaspark_api.h
 │   └── gigaspark_api.c
 │
-├── simulator/                     # Simulador nativo SDL2
+├── common/                        # Núcleo UI portable (simulador + M7)
+│   ├── ui_os.c                    # Render, hit-test y acciones
+│   ├── ui_material.c              # Widgets Material Design 3
+│   └── include/                   # Tema, framebuffer y Roboto
+│
+├── simulator/                     # Simulador nativo SDL3/SDL2
 │   ├── main.c
 │   ├── sdk_stubs.c
 │   ├── CMakeLists.txt
@@ -171,6 +177,8 @@ gigaspark_os/
 ├── docs/
 │   ├── Doxyfile                   # Generacion Doxygen
 │   ├── SIMULATOR.md               # Guia del simulador
+│   ├── HARDWARE_FIDELITY.md       # Backend y límites de hardware
+│   ├── VERSIONS.md                # Versiones comprobadas
 │   └── API.md
 │
 ├── BUILD.md                       # Guia de compilacion
@@ -186,7 +194,7 @@ gigaspark_os/
 Ejecuta Gigaspark OS en tu PC sin hardware fisico:
 
 ```bash
-# Instalar dependencias
+# Instalar SDL2 (respaldo ampliamente empaquetado); SDL3 se detecta primero si está instalado
 sudo pacman -S sdl2 gcc make pkgconf    # Arch/CachyOS
 sudo apt install libsdl2-dev gcc make pkg-config  # Ubuntu/Debian
 
@@ -200,17 +208,20 @@ La ventana se abre con el launcher. Usa el mouse como touch, flechas para navega
 
 Ver [docs/SIMULATOR.md](docs/SIMULATOR.md) para instrucciones detalladas.
 
+Para ejecutar la prueba automatica sin ventana: `SDL_VIDEODRIVER=dummy ./gigaspark_sim --smoke`.
+Las optimizaciones, mediciones y limites de verificacion estan en [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
+
 ---
 
 ## Inicio Rapido (Hardware)
 
 ```bash
 # Clonar el repositorio
-git clone https://github.com/gabo/gigaspark_os.git
-cd gigaspark_os
+git clone https://github.com/gaboexperimetos-ui/giga-spark-os-.git
+cd giga-spark-os-
 
-# Compilar firmware M7 (requiere Zephyr SDK)
-west build -p -b arduino_giga_r1/stm32h747xx/m7 --sysbuild .
+# Compilar firmware M7 (requiere Zephyr SDK). Dibuja en el Display Shield.
+west build -p -b arduino_giga_r1/stm32h747xx/m7 --shield arduino_giga_display_shield
 
 # Flashear por USB
 west flash
@@ -230,25 +241,25 @@ El diseño del PCB esta en `hardware/Gigaspark_Mega/`. Ver [HARDWARE.md](HARDWAR
 
 | Metrica | Valor |
 |---------|-------|
-| Flash M7 | 143 KB / 768 KB (18%) |
-| RAM M7 | 125 KB / 512 KB (24%) |
-| Flash M4 | 61 KB |
-| RAM M4 | 40 KB (31%) |
-| Tests | 18/18 passing |
-| Commits | 23 |
-| Phases | 22 completadas |
+| Paquete CI M7 | 2,818,374 bytes (ZIP con `zephyr.bin` y `zephyr.elf`) |
+| Paquete CI M4 | 816,294 bytes (ZIP con `zephyr.bin` y `zephyr.elf`) |
+| Framebuffer UI | 800 × 480 × 2 = 768,000 bytes en SDRAM externa |
+| CI | 8/8 jobs en verde (lint, pruebas, simulador, M4 y M7) |
+| Tests de preview | 15 |
 
 ---
 
 ## Tecnologias
 
-- **RTOS:** Zephyr 4.4.1
+- **RTOS:** Zephyr 4.5.0 (fijado en `west.yml`)
+- **Simulador:** SDL3 3.4.20, con respaldo en SDL2 2.32.10
+- **Versiones y su verificación:** [`docs/VERSIONS.md`](docs/VERSIONS.md)
 - **MCU:** STM32H747XI (Cortex-M7 480MHz + M4 240MHz)
-- **GUI:** LVGL 9.5.0
+- **GUI:** render propio en RGB565 (`common/ui_os.c`), Material Design 3.
+  Es el mismo código en el simulador y en el panel real de la placa; no usa LVGL.
 - **IPC:** OpenAMP/RPMsg
-- **Simulador:** SDL2 nativo (sin dependencias Zephyr)
 - **Hardware Design:** KiCad 10.0.6
-- **Lenguaje:** C puro (C99/C11)
+- **Lenguaje:** C puro (C11)
 - **CI/CD:** GitHub Actions
 
 ---

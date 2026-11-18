@@ -1,699 +1,207 @@
 /*
- * Gigaspark OS - Gemelo Digital v2
- * Resolucion exacta: 480x272 (Giga Display Shield ILI9341)
- * Cada app tiene su diseno profesional unico
+ * Gigaspark OS - Simulador SDL (backend de escritorio)
+ *
+ * La interfaz vive en common/ui_os.c y es portable: este fichero solo aporta
+ * ventana, reloj y traduccion de eventos. El M7 usa el mismo nucleo contra el
+ * panel real, asi que el simulador no es una maqueta aparte.
+ *
+ * Resolucion 800x480 landscape, la del Arduino GIGA Display Shield
+ * (panel KD040WVFID026 de 3.97", ST7701 por MIPI DSI, touch GT911).
+ * Ver docs/HARDWARE_FIDELITY.md.
  */
 
-#include <SDL2/SDL.h>
+#include "sdl_compat.h"
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 #include <math.h>
 
-/* ============================================================
- * GIGA DISPLAY SHIELD - 480x272 EXACTO
- * ============================================================ */
-
-#define SCR_W  480
-#define SCR_H  272
-#define SCALE  2
+#define SCALE  1
 #define WIN_W  (SCR_W * SCALE)
 #define WIN_H  (SCR_H * SCALE)
 #define FPS    30
 #define FRAME  (1000 / FPS)
 
+#define UI_TICKS() gsp_ticks()
+#include "../common/ui_os.c"
+
+/* Cursor de la pantalla de Ajustes para navegacion por teclado. Vive aqui y no
+ * en el nucleo porque solo existe en el backend de escritorio: en la placa la
+ * entrada es el dedo. Estaba en el nucleo y el M7, que no tiene teclado,
+ * abortaba con -Werror=unused-variable. */
+static int st_sel;
+
+static bool handle_event(const SDL_Event *ev, int *screen, bool *run) {
+	/* SDL2 agrupaba los eventos de ventana en SDL_WINDOWEVENT; SDL3 emite
+	 * uno por caso. gsp_window_needs_redraw() abstrae la diferencia. */
+	if (gsp_window_needs_redraw(ev)) return true;
+	switch (ev->type) {
+	case GSP_EV_QUIT: *run = false; return false;
+	case GSP_EV_KEYDOWN:
+		switch (gsp_event_key(ev)) {
+		case GSP_KEY_Q: *run = false; return false;
+		case SDLK_ESCAPE: qs_open = false; *screen = 0; return true;
+		case SDLK_UP:
+			if (*screen == 0 && la_sel > 0) { la_sel--; return true; }
+			if (*screen == 5 && st_sel > 0) { st_sel--; return true; }
+			break;
+		case SDLK_DOWN:
+			if (*screen == 0 && la_sel < LA_N - 1) { la_sel++; return true; }
+			if (*screen == 5 && st_sel < 3) { st_sel++; return true; }
+			break;
+		case SDLK_RETURN:
+			if (*screen == 0) { *screen = la_sel + 1; return true; }
+			break;
+		case SDLK_1: case SDLK_2: case SDLK_3:
+		case SDLK_4: case SDLK_5: case SDLK_6:
+			qs_open = false;
+			*screen = gsp_event_key(ev) - SDLK_1 + 1;
+			return true;
+		default: break;
+		}
+		break;
+	case GSP_EV_MOUSEDOWN:
+		if (ev->button.button == SDL_BUTTON_LEFT) {
+			int act = hit_test(ev->button.x / SCALE, ev->button.y / SCALE);
+			if (act == A_NONE) return false;
+			press_act = act;
+			press_live = true;
+			press_until = gsp_ticks() + 110;
+			return dispatch(act, screen) || true;
+		}
+		break;
+	default: break;
+	}
+	return false;
+}
+
 /* ============================================================
- * COLORES GIGA DISPLAY (RGB565)
+ * SDL
  * ============================================================ */
 
-#define BLK  0x0000
-#define WHT  0xFFFF
-#define GRY  0x7BEF
-#define DGR  0x2124
-#define LGR  0xBDF7
-#define CYN  0x07FF
-#define GRN  0x07E0
-#define RED  0xF800
-#define YEL  0xFFE0
-#define BLU  0x001F
-#define BL2  0x5D1F
-#define ORG  0xFD20
-#define PRP  0x881F
-#define NAV  0x18C3
-#define STS  0x0842
-#define PAN  0x10A2
-#define CRD  0x2124
-#define BDR  0x4208
-#define ACC  0x07FF
-
-/* ============================================================ */
-
-static uint16_t fb[SCR_W * SCR_H];
-
-static void px(int x, int y, uint16_t c) {
-	if (x >= 0 && x < SCR_W && y >= 0 && y < SCR_H)
-		fb[y * SCR_W + x] = c;
+static int present_frame(SDL_Renderer *ren, SDL_Texture *tex, int screen,
+			 uint32_t t, uint8_t bat) {
+	render_screen(screen, t, bat);
+	/* Brillo = retroiluminacion (PWM), no contenido del panel. Se atenua en
+	 * el renderer, despues de expandir a 8 bits: ver backlight_scale(). */
+	uint8_t k = backlight_scale();
+	gsp_color_mod(tex, k, k, k);
+	if (!gsp_update_texture(tex, fb, SCR_W * (int)sizeof(uint16_t)) ||
+	    !gsp_clear(ren) || !gsp_copy(ren, tex)) {
+		fprintf(stderr, "SDL%d render: %s\n", GSP_SDL_MAJOR, SDL_GetError());
+		return -1;
+	}
+	SDL_RenderPresent(ren);
+	return 0;
 }
 
-static void frect(int x, int y, int w, int h, uint16_t c) {
-	for (int j = y; j < y + h; j++)
-		for (int i = x; i < x + w; i++)
-			px(i, j, c);
-}
-
-static void drect(int x, int y, int w, int h, uint16_t c) {
-	for (int i = 0; i < w; i++) { px(x+i, y, c); px(x+i, y+h-1, c); }
-	for (int j = 0; j < h; j++) { px(x, y+j, c); px(x+w-1, y+j, c); }
-}
-
-/* ============================================================
- * FONT 8x16 COMPACTA
- * ============================================================ */
-
-static const uint8_t FNT[][16] = {
-	{0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x18,0x3C,0x3C,0x3C,0x18,0x18,0x18,0x00,0x18,0x18,0x00,0x00,0x00,0x00},
-	{0x00,0x66,0x66,0x66,0x24,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x6C,0x6C,0xFE,0x6C,0x6C,0x6C,0xFE,0x6C,0x6C,0x00,0x00,0x00,0x00},
-	{0x18,0x18,0x7C,0xC6,0xC2,0xC0,0x7C,0x06,0x06,0x86,0xC6,0x7C,0x18,0x18,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0xC2,0xC6,0x0C,0x18,0x30,0x60,0xC6,0x86,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x38,0x6C,0x6C,0x38,0x76,0xDC,0xCC,0xCC,0xCC,0x76,0x00,0x00,0x00,0x00},
-	{0x00,0x30,0x30,0x30,0x60,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x0C,0x18,0x30,0x30,0x30,0x30,0x30,0x30,0x18,0x0C,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x30,0x18,0x0C,0x0C,0x0C,0x0C,0x0C,0x0C,0x18,0x30,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0x00,0x66,0x3C,0xFF,0x3C,0x66,0x00,0x00,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0x00,0x18,0x18,0x7E,0x18,0x18,0x00,0x00,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x18,0x18,0x18,0x30,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0x00,0x00,0x00,0xFE,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x18,0x18,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0x02,0x06,0x0C,0x18,0x30,0x60,0xC0,0x80,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x7C,0xC6,0xC6,0xCE,0xDE,0xF6,0xE6,0xC6,0xC6,0x7C,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x18,0x38,0x78,0x18,0x18,0x18,0x18,0x18,0x18,0x7E,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x7C,0xC6,0x06,0x0C,0x18,0x30,0x60,0xC0,0xC6,0xFE,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x7C,0xC6,0x06,0x06,0x3C,0x06,0x06,0x06,0xC6,0x7C,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x0C,0x1C,0x3C,0x6C,0xCC,0xFE,0x0C,0x0C,0x0C,0x1E,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0xFE,0xC0,0xC0,0xC0,0xFC,0x06,0x06,0x06,0xC6,0x7C,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x38,0x60,0xC0,0xC0,0xFC,0xC6,0xC6,0xC6,0xC6,0x7C,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0xFE,0xC6,0x06,0x06,0x0C,0x18,0x30,0x30,0x30,0x30,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x7C,0xC6,0xC6,0xC6,0x7C,0xC6,0xC6,0xC6,0xC6,0x7C,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x7C,0xC6,0xC6,0xC6,0x7E,0x06,0x06,0x06,0x0C,0x78,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0x18,0x18,0x00,0x00,0x00,0x18,0x18,0x00,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0x18,0x18,0x00,0x00,0x00,0x18,0x18,0x30,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x06,0x0C,0x18,0x30,0x60,0x30,0x18,0x0C,0x06,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0x00,0x7E,0x00,0x00,0x7E,0x00,0x00,0x00,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x60,0x30,0x18,0x0C,0x06,0x0C,0x18,0x30,0x60,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x7C,0xC6,0xC6,0x0C,0x18,0x18,0x18,0x00,0x18,0x18,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x7C,0xC6,0xC6,0xDE,0xDE,0xDE,0xDC,0xC0,0x7C,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x10,0x38,0x6C,0xC6,0xC6,0xFE,0xC6,0xC6,0xC6,0xC6,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0xFC,0x66,0x66,0x66,0x7C,0x66,0x66,0x66,0x66,0xFC,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x3C,0x66,0xC2,0xC0,0xC0,0xC0,0xC0,0xC2,0x66,0x3C,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0xF8,0x6C,0x66,0x66,0x66,0x66,0x66,0x66,0x6C,0xF8,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0xFE,0x66,0x62,0x68,0x78,0x68,0x60,0x62,0x66,0xFE,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0xFE,0x66,0x62,0x68,0x78,0x68,0x60,0x60,0x60,0xF0,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x3C,0x66,0xC2,0xC0,0xC0,0xDE,0xC6,0xC6,0x66,0x3A,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0xC6,0xC6,0xC6,0xC6,0xFE,0xC6,0xC6,0xC6,0xC6,0xC6,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x3C,0x18,0x18,0x18,0x18,0x18,0x18,0x18,0x18,0x3C,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x1E,0x0C,0x0C,0x0C,0x0C,0x0C,0xCC,0xCC,0xCC,0x78,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0xE6,0x66,0x66,0x6C,0x78,0x78,0x6C,0x66,0x66,0xE6,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0xF0,0x60,0x60,0x60,0x60,0x60,0x60,0x62,0x66,0xFE,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0xC6,0xEE,0xFE,0xFE,0xD6,0xC6,0xC6,0xC6,0xC6,0xC6,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0xC6,0xE6,0xF6,0xFE,0xDE,0xCE,0xC6,0xC6,0xC6,0xC6,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x7C,0xC6,0xC6,0xC6,0xC6,0xC6,0xC6,0xC6,0xC6,0x7C,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0xFC,0x66,0x66,0x66,0x7C,0x60,0x60,0x60,0x60,0xF0,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x7C,0xC6,0xC6,0xC6,0xC6,0xC6,0xC6,0xD6,0xDE,0x7C,0x0C,0x0E,0x00,0x00},
-	{0x00,0x00,0xFC,0x66,0x66,0x66,0x7C,0x6C,0x66,0x66,0x66,0xE6,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x7C,0xC6,0xC6,0x60,0x38,0x0C,0x06,0xC6,0xC6,0x7C,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x7E,0x7E,0x5A,0x18,0x18,0x18,0x18,0x18,0x18,0x3C,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0xC6,0xC6,0xC6,0xC6,0xC6,0xC6,0xC6,0xC6,0xC6,0x7C,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0xC6,0xC6,0xC6,0xC6,0xC6,0xC6,0xC6,0x6C,0x38,0x10,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0xC6,0xC6,0xC6,0xC6,0xD6,0xD6,0xD6,0xFE,0xEE,0x6C,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0xC6,0xC6,0x6C,0x7C,0x38,0x38,0x7C,0x6C,0xC6,0xC6,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x66,0x66,0x66,0x66,0x3C,0x18,0x18,0x18,0x18,0x3C,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0xFE,0xC6,0x86,0x0C,0x18,0x30,0x60,0xC2,0xC6,0xFE,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x3C,0x30,0x30,0x30,0x30,0x30,0x30,0x30,0x30,0x3C,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x80,0xC0,0x60,0x30,0x18,0x0C,0x06,0x02,0x00,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x3C,0x0C,0x0C,0x0C,0x0C,0x0C,0x0C,0x0C,0x0C,0x3C,0x00,0x00,0x00,0x00},
-	{0x10,0x38,0x6C,0xC6,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0xFF,0x00},
-	{0x30,0x30,0x18,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0x00,0x78,0x0C,0x7C,0xCC,0xCC,0xCC,0x76,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0xE0,0x60,0x60,0x78,0x6C,0x66,0x66,0x66,0x66,0x7C,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0x00,0x7C,0xC6,0xC0,0xC0,0xC0,0xC6,0x7C,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x1C,0x0C,0x0C,0x3C,0x6C,0xCC,0xCC,0xCC,0xCC,0x76,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0x00,0x7C,0xC6,0xFE,0xC0,0xC0,0xC6,0x7C,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x1C,0x36,0x32,0x30,0x78,0x30,0x30,0x30,0x30,0x78,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0x00,0x76,0xCC,0xCC,0xCC,0xCC,0x7C,0x0C,0xCC,0x78,0x00,0x00},
-	{0x00,0x00,0xE0,0x60,0x60,0x6C,0x76,0x66,0x66,0x66,0x66,0xE6,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x18,0x18,0x00,0x38,0x18,0x18,0x18,0x18,0x18,0x3C,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x06,0x06,0x00,0x0E,0x06,0x06,0x06,0x06,0x06,0x06,0x66,0x3C,0x00,0x00},
-	{0x00,0x00,0xE0,0x60,0x60,0x66,0x6C,0x78,0x78,0x6C,0x66,0xE6,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x38,0x18,0x18,0x18,0x18,0x18,0x18,0x18,0x18,0x3C,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0x00,0xEC,0xFE,0xD6,0xD6,0xD6,0xD6,0xC6,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0x00,0xDC,0x66,0x66,0x66,0x66,0x66,0x66,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0x00,0x7C,0xC6,0xC6,0xC6,0xC6,0xC6,0x7C,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0x00,0xDC,0x66,0x66,0x66,0x66,0x7C,0x60,0x60,0xF0,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0x00,0x76,0xCC,0xCC,0xCC,0xCC,0x7C,0x0C,0x0C,0x1E,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0x00,0xDC,0x76,0x66,0x60,0x60,0x60,0xF0,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0x00,0x7C,0xC6,0x60,0x38,0x0C,0xC6,0x7C,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x10,0x30,0x30,0xFC,0x30,0x30,0x30,0x30,0x36,0x1C,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0x00,0xCC,0xCC,0xCC,0xCC,0xCC,0xCC,0x76,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0x00,0xC6,0xC6,0xC6,0xC6,0x6C,0x38,0x10,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0x00,0xC6,0xC6,0xD6,0xD6,0xD6,0xFE,0x6C,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0x00,0xC6,0x6C,0x38,0x38,0x38,0x6C,0xC6,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0x00,0xC6,0xC6,0xC6,0xC6,0xC6,0x7E,0x06,0x0C,0xF8,0x00,0x00},
-	{0x00,0x00,0x00,0x00,0x00,0xFE,0xCC,0x18,0x30,0x60,0xC6,0xFE,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x0E,0x18,0x18,0x18,0x70,0x18,0x18,0x18,0x18,0x0E,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x18,0x18,0x18,0x18,0x00,0x18,0x18,0x18,0x18,0x18,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x70,0x18,0x18,0x18,0x0E,0x18,0x18,0x18,0x18,0x70,0x00,0x00,0x00,0x00},
-	{0x00,0x00,0x76,0xDC,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00},
-};
-
-static void fchar(int x, int y, char c, uint16_t col, int sc) {
-	int i = c - 32;
-	if (i < 0 || i > 94) return;
-	for (int r = 0; r < 16; r++) {
-		uint8_t b = FNT[i][r];
-		for (int c2 = 0; c2 < 8; c2++) {
-			if (b & (0x80 >> c2)) {
-				for (int sy = 0; sy < sc; sy++)
-					for (int sx = 0; sx < sc; sx++)
-						px(x + c2*sc+sx, y + r*sc+sy, col);
+static int smoke_test(void) {
+	SDL_Window *win = gsp_window("Gigaspark smoke", WIN_W, WIN_H, true);
+	if (!win) return 1;
+	SDL_Renderer *ren = gsp_renderer(win, true);
+	SDL_Texture *tex = ren ? SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGB565,
+						  SDL_TEXTUREACCESS_STREAMING, SCR_W, SCR_H) : NULL;
+	int result = tex ? 0 : 1;
+	for (int screen = 0; tex && screen < 7; ++screen) {
+		result |= present_frame(ren, tex, screen, 1000, 100);
+		/* Toda pantalla debe exponer objetivos tactiles de >= 80 px. */
+		if (nhits == 0) { fprintf(stderr, "pantalla %d sin zonas tactiles\n", screen); result = 1; }
+		for (int i = 0; i < nhits; i++) {
+			int m = hits[i].w < hits[i].h ? hits[i].w : hits[i].h;
+			if (m < TOUCH_MIN) {
+				fprintf(stderr, "pantalla %d: objetivo %d de %d px (< %d)\n",
+					screen, hits[i].act, m, TOUCH_MIN);
+				result = 1;
 			}
 		}
 	}
+	if (tex) SDL_DestroyTexture(tex);
+	if (ren) SDL_DestroyRenderer(ren);
+	SDL_DestroyWindow(win);
+	return result ? 1 : 0;
 }
-
-static void fstr(int x, int y, const char *s, uint16_t col, int sc) {
-	while (*s) { fchar(x, y, *s, col, sc); x += 8 * sc; s++; }
-}
-
-static void fstrc(int y, const char *s, uint16_t col, int sc) {
-	int w = strlen(s) * 8 * sc;
-	fstr((SCR_W - w) / 2, y, s, col, sc);
-}
-
-static void utoa(uint32_t v, char *b) {
-	char t[12]; int i = 0;
-	if (!v) { b[0]='0'; b[1]=0; return; }
-	while (v) { t[i++] = '0' + v % 10; v /= 10; }
-	for (int j = 0; j < i; j++) b[j] = t[i-1-j];
-	b[i] = 0;
-}
-
-/* ============================================================
- * WIDGETS
- * ============================================================ */
-
-static void wbar(int x, int y, int w, int h, uint8_t pct, uint16_t fg, uint16_t bg) {
-	drect(x, y, w, h, BDR);
-	frect(x+1, y+1, w-2, h-2, bg);
-	int fw = (w-4) * pct / 100;
-	if (fw > 0) frect(x+2, y+2, fw, h-4, fg);
-}
-
-static void wbtn(int x, int y, int w, int h, const char *t, uint16_t bg, uint16_t fg, bool sel) {
-	frect(x, y, w, h, sel ? ACC : bg);
-	drect(x, y, w, h, sel ? WHT : BDR);
-	int tw = strlen(t) * 8;
-	fstr(x + (w-tw)/2, y + (h-16)/2, t, fg, 1);
-}
-
-static void wbatt(int x, int y, uint8_t pct) {
-	drect(x, y, 26, 13, LGR);
-	frect(x+2, y+2, 22, 9, pct > 20 ? GRN : RED);
-	frect(x+26, y+4, 3, 5, LGR);
-	char b[8]; utoa(pct, b);
-	fstr(x - 32, y - 1, b, LGR, 1);
-}
-
-static void wstatus(uint32_t t, uint8_t bat) {
-	frect(0, 0, SCR_W, 22, STS);
-	frect(0, 22, SCR_W, 1, BDR);
-	fstr(8, 4, "GIGASPARK", ACC, 1);
-	wbatt(SCR_W - 80, 5, bat);
-	uint32_t s = t / 1000;
-	char tb[8];
-	tb[0]='0'+(s/3600)%24/10; tb[1]='0'+(s/3600)%24%10;
-	tb[2]=':'; tb[3]='0'+(s/60)%10; tb[4]='0'+(s/60)%10;
-	tb[5]=0;
-	fstr(SCR_W/2-20, 4, tb, LGR, 1);
-}
-
-static int nby;
-static void wnav(int sel) {
-	nby = SCR_H - 44;
-	frect(0, nby, SCR_W, 44, NAV);
-	frect(0, nby, SCR_W, 1, BDR);
-	int bw=120, bh=30, by=nby+7, g=(SCR_W-bw*3)/4;
-	const char *lb[]={"HOME","BACK","MENU"};
-	for (int i=0; i<3; i++) {
-		int bx = g + i*(bw+g);
-		wbtn(bx, by, bw, bh, lb[i], BLU, WHT, i==sel);
-	}
-}
-
-/* ============================================================
- * APP: OSCILLOSCOPE
- * ============================================================ */
-
-static float sc_phase = 0;
-
-static void app_scope(uint32_t t, uint8_t bat) {
-	wstatus(t, bat);
-
-	/* Header */
-	frect(0, 23, SCR_W, 30, 0x0030);
-	fstr(15, 28, "OSCILLOSCOPE", GRN, 2);
-	fstr(15, 44, "2CH 1MSPS 10Vpp", GRY, 1);
-
-	/* Grid principal */
-	int gx=10, gy=60, gw=290, gh=170;
-	frect(gx, gy, gw, gh, 0x0005);
-
-	/* Lineas de grid */
-	for (int i=0; i<=10; i++) {
-		int x = gx + i * gw / 10;
-		for (int y=gy; y<gy+gh; y+=3) px(x, y, 0x1082);
-	}
-	for (int i=0; i<=8; i++) {
-		int y = gy + i * gh / 8;
-		for (int x=gx; x<gx+gw; x+=3) px(x, y, 0x1082);
-	}
-
-	/* Eje central */
-	for (int x=gx; x<gx+gw; x+=2) px(x, gy+gh/2, 0x2104);
-
-	/* CH1 - Senoidal verde */
-	sc_phase += 0.12f;
-	for (int x=0; x<gw; x++) {
-		float v = sinf(2.0f*3.14159f*3.0f*(float)x/gw + sc_phase);
-		int sy = gy + gh/2 - (int)(v * gh * 0.35f);
-		if (sy>=gy && sy<gy+gh) { px(gx+x, sy, GRN); px(gx+x, sy+1, GRN); }
-	}
-
-	/* CH2 - Cuadrada amarilla */
-	for (int x=0; x<gw; x++) {
-		float v = sinf(2.0f*3.14159f*1.5f*(float)x/gw + sc_phase*0.7f);
-		int sy = gy + gh/2 - (int)(v > 0 ? gh*0.2 : -gh*0.2);
-		if (sy>=gy && sy<gy+gh) px(gx+x, sy, YEL);
-	}
-
-	drect(gx, gy, gw, gh, GRY);
-
-	/* Panel derecho */
-	int px2 = 310;
-	frect(px2, 60, 160, 170, CRD);
-	drect(px2, 60, 160, 170, BDR);
-
-	fstr(px2+10, 68, "CH1 SENOIDAL", GRN, 1);
-	fstr(px2+10, 88, "Vpp:   2.00V", WHT, 1);
-	fstr(px2+10, 104, "Freq:  50Hz", WHT, 1);
-	fstr(px2+10, 120, "Phase: 0 deg", WHT, 1);
-
-	frect(px2+10, 140, 140, 1, BDR);
-
-	fstr(px2+10, 148, "CH2 CUADRADA", YEL, 1);
-	fstr(px2+10, 168, "Vpp:   1.20V", WHT, 1);
-	fstr(px2+10, 184, "Freq:  25Hz", WHT, 1);
-
-	/* Botones */
-	wbtn(px2+10, 204, 65, 24, "RUN", GRN, WHT, true);
-	wbtn(px2+85, 204, 65, 24, "STOP", RED, WHT, false);
-
-	wnav(-1);
-}
-
-/* ============================================================
- * APP: POWER SUPPLY
- * ============================================================ */
-
-static int ps_v = 3300, ps_i = 500;
-
-static void app_psu(uint32_t t, uint8_t bat) {
-	wstatus(t, bat);
-
-	frect(0, 23, SCR_W, 30, 0x3000);
-	fstr(15, 28, "POWER SUPPLY", ORG, 2);
-	fstr(15, 44, "DUAL 0-30V 0-5A", GRY, 1);
-
-	/* Canal 1 */
-	int y = 65;
-	frect(10, y, 220, 90, CRD);
-	drect(10, y, 220, 90, GRN);
-	fstr(20, y+8, "CH1 VOLTAGE", GRN, 1);
-	wbar(20, y+28, 180, 18, ps_v*100/30000, GRN, BLK);
-	char vb[16]; utoa(ps_v/1000, vb);
-	int l = strlen(vb); vb[l]='.'; vb[l+1]='0'+(ps_v/100)%10; vb[l+2]='V'; vb[l+3]=0;
-	fstr(210, y+28, vb, GRN, 2);
-	wbtn(20, y+55, 50, 26, "-", BLU, WHT, false);
-	wbtn(80, y+55, 50, 26, "+", BLU, WHT, false);
-	fstr(140, y+60, "0-30V", GRY, 1);
-
-	/* Canal 2 */
-	y += 100;
-	frect(10, y, 220, 90, CRD);
-	drect(10, y, 220, 90, YEL);
-	fstr(20, y+8, "CH2 CURRENT", YEL, 1);
-	wbar(20, y+28, 180, 18, ps_i*100/5000, YEL, BLK);
-	char ib[16]; utoa(ps_i, ib);
-	int il = strlen(ib); ib[il]='m'; ib[il+1]='A'; ib[il+2]=0;
-	fstr(210, y+28, ib, YEL, 2);
-	wbtn(20, y+55, 50, 26, "-", BLU, WHT, false);
-	wbtn(80, y+55, 50, 26, "+", BLU, WHT, false);
-	fstr(140, y+60, "0-5A", GRY, 1);
-
-	/* Panel derecho - Power ON/OFF */
-	frect(250, 65, 220, 190, CRD);
-	drect(250, 65, 220, 190, BDR);
-	fstr(260, 75, "CONTROL", ACC, 1);
-
-	fstr(260, 100, "Status: ON", GRN, 1);
-	fstr(260, 120, "Modo: CV", WHT, 1);
-	fstr(260, 140, "Prot: OVP/OCP", WHT, 1);
-
-	wbtn(260, 170, 95, 32, "ON", GRN, WHT, true);
-	wbtn(365, 170, 95, 32, "OFF", RED, WHT, false);
-
-	/* Power total */
-	fstr(260, 215, "Total: 1.65W", CYN, 1);
-
-	wnav(-1);
-}
-
-/* ============================================================
- * APP: FLIPPER RF
- * ============================================================ */
-
-static int fl_mode = 0;
-static const char *fl_modes[] = {"SUB-1GHZ", "NFC/RFID", "INFRAROJO", "GPIO"};
-
-static void app_flip(uint32_t t, uint8_t bat) {
-	wstatus(t, bat);
-
-	frect(0, 23, SCR_W, 30, 0x2008);
-	fstr(15, 28, "FLIPPER RF", PRP, 2);
-	fstr(15, 44, "SUB-1GHZ NFC IR GPIO", GRY, 1);
-
-	/* Modos izquierda */
-	for (int i=0; i<4; i++) {
-		int y = 65 + i*48;
-		bool sel = (i == fl_mode);
-		frect(10, y, 180, 40, sel ? PRP : CRD);
-		drect(10, y, 180, 40, sel ? WHT : BDR);
-		fstr(20, y+12, fl_modes[i], sel ? WHT : LGR, 1);
-		if (sel) fstr(160, y+12, ">", WHT, 1);
-	}
-
-	/* Panel derecho - Simulacion de senal */
-	frect(200, 65, 270, 190, CRD);
-	drect(200, 65, 270, 190, BDR);
-	fstr(210, 73, "SEÑAL EN TIEMPO REAL", CYN, 1);
-
-	/* Grafico de senal */
-	int gx=210, gy=95, gw=250, gh=80;
-	frect(gx, gy, gw, gh, BLK);
-	drect(gx, gy, gw, gh, BDR);
-
-	/* Lineas de grid */
-	for (int i=0; i<=5; i++) {
-		int x = gx + i*gw/5;
-		for (int y=gy; y<gy+gh; y+=4) px(x, y, 0x1082);
-	}
-
-	/* Senal RF simulada */
-	for (int x=0; x<gw; x++) {
-		float v = sinf(2.0f*3.14159f*8.0f*(float)x/gw + (float)t/150.0f);
-		int sy = gy + gh/2 - (int)(v * gh * 0.35f);
-		if (sy>=gy && sy<gy+gh) { px(gx+x, sy, PRP); px(gx+x, sy+1, PRP); }
-	}
-
-	/* Info */
-	fstr(210, 185, "Freq: 433.92MHz", WHT, 1);
-	fstr(210, 201, "Pot:  +10dBm", WHT, 1);
-	fstr(210, 217, "Proto: Manchester", WHT, 1);
-	fstr(210, 233, "Rate: 4.8kbps", WHT, 1);
-
-	wnav(-1);
-}
-
-/* ============================================================
- * APP: WIFI SCANNER
- * ============================================================ */
-
-static void app_wifi(uint32_t t, uint8_t bat) {
-	wstatus(t, bat);
-
-	frect(0, 23, SCR_W, 30, 0x0018);
-	fstr(15, 28, "WIFI SCANNER", BLU, 2);
-	fstr(15, 44, "2.4GHz Networks", GRY, 1);
-
-	/* Lista de redes */
-	const char *nets[] = {"MiFibra-5G", "MOVISTAR_7F2E", "JAZZTEL_8FA2", "WIFI_GUEST", "Gigaspark_AP"};
-	int sig[] = {85, 72, 55, 40, 95};
-	int ch[] = {6, 11, 1, 3, 6};
-
-	for (int i=0; i<5; i++) {
-		int y = 65 + i*38;
-		frect(10, y, 460, 32, CRD);
-		drect(10, y, 460, 32, BDR);
-
-		/* Icono signal */
-		for (int b=0; b<4; b++) {
-			int bh = 4 + b*4;
-			int bx = 20 + b*6;
-			int by = y + 24 - bh;
-			uint16_t sc = (b < sig[i]/25) ? GRN : BDR;
-			frect(bx, by, 4, bh, sc);
-		}
-
-		/* Nombre */
-		fstr(50, y+8, nets[i], WHT, 1);
-
-		/* Info derecha */
-		char sbuf[16];
-		utoa(sig[i], sbuf);
-		int sl = strlen(sbuf); sbuf[sl]='%'; sbuf[sl+1]=0;
-		fstr(300, y+8, sbuf, sig[i]>60 ? GRN : sig[i]>30 ? YEL : RED, 1);
-
-		char cbuf[16] = "CH";
-		int cl = 2; utoa(ch[i], cbuf+cl);
-		fstr(370, y+8, cbuf, CYN, 1);
-
-		fstr(420, y+8, i==4 ? "AP" : ">", i==4 ? GRN : GRY, 1);
-	}
-
-	wnav(-1);
-}
-
-/* ============================================================
- * APP: SETTINGS
- * ============================================================ */
-
-static int st_sel = 0;
-static uint32_t st_to = 15;
-static uint8_t st_br = 80;
-
-static void app_set(uint32_t t, uint8_t bat) {
-	wstatus(t, bat);
-
-	frect(0, 23, SCR_W, 30, 0x0810);
-	fstr(15, 28, "SETTINGS", ACC, 2);
-	fstr(15, 44, "CONFIGURACION", GRY, 1);
-
-	const char *items[] = {"Suspension", "Brillo", "WiFi", "Acerca de"};
-	for (int i=0; i<4; i++) {
-		int y = 65 + i*48;
-		bool sel = (i == st_sel);
-		frect(10, y, 460, 40, sel ? ACC : CRD);
-		drect(10, y, 460, 40, sel ? WHT : BDR);
-		fstr(20, y+12, items[i], sel ? WHT : LGR, 1);
-
-		if (i==0) {
-			char vb[16]; utoa(st_to, vb);
-			int l=strlen(vb); vb[l]='s'; vb[l+1]=0;
-			fstr(400, y+12, vb, GRN, 1);
-		} else if (i==1) {
-			wbar(300, y+10, 100, 20, st_br, GRN, BLK);
-		}
-	}
-
-	wnav(-1);
-}
-
-/* ============================================================
- * APP: ABOUT
- * ============================================================ */
-
-static void app_about(uint32_t t, uint8_t bat) {
-	wstatus(t, bat);
-
-	frect(0, 23, SCR_W, 30, 0x0808);
-	fstrc(30, "GIGASPARK OS", ACC, 2);
-	fstrc(54, "v1.0 Dual-Core RTOS", GRY, 1);
-
-	frect(20, 80, 440, 180, CRD);
-	drect(20, 80, 440, 180, BDR);
-
-	int y = 95;
-	fstrc(y, "STM32H747XI (M7 480MHz + M4 240MHz)", LGR, 1); y+=20;
-	fstrc(y, "Zephyr RTOS 4.4.1", LGR, 1); y+=20;
-	fstrc(y, "Buddy Allocator + zRAM + NVS Flash", LGR, 1); y+=20;
-	fstrc(y, "25 Apps: Oscilloscope, PSU, Flipper...", LGR, 1); y+=20;
-	fstrc(y, "PCB KiCad 10.0.6 - 4 Capas", LGR, 1); y+=20;
-	fstrc(y, "Gemelo Digital SDL2 - Sin Hardware", LGR, 1); y+=30;
-	fstrc(y, "github.com/gruposalas2025-ship-it/gigaspark", CYN, 1); y+=20;
-	fstrc(y, "by Gabo - 2026 - MIT License", GRY, 1);
-
-	wnav(-1);
-}
-
-/* ============================================================
- * LAUNCHER
- * ============================================================ */
-
-static int la_sel = 0;
-#define LA_N 6
-static const char *la_nm[] = {"Oscilloscope", "Power Supply", "Flipper RF", "WiFi Scanner", "Settings", "About"};
-static const char *la_ic[] = {"~", "+", ")", "*", "#", "i"};
-
-static void app_launch(uint32_t t, uint8_t bat) {
-	wstatus(t, bat);
-
-	frect(0, 23, SCR_W, 30, 0x0018);
-	fstr(15, 28, "GIGASPARK OS", ACC, 2);
-	fstr(15, 44, "v1.0 - Dual-Core RTOS for Arduino Giga R1", GRY, 1);
-
-	int cw=200, rh=50, sx=20, sy=70;
-	for (int i=0; i<LA_N; i++) {
-		int c=i%2, r=i/2;
-		int ax=sx+c*(cw+20), ay=sy+r*(rh+10);
-		bool sel=(i==la_sel);
-		frect(ax, ay, cw, rh, sel ? ACC : CRD);
-		drect(ax, ay, cw, rh, sel ? WHT : BDR);
-		fstr(ax+10, ay+8, la_ic[i], sel ? YEL : ACC, 2);
-		fstr(ax+40, ay+14, la_nm[i], sel ? WHT : LGR, 1);
-		if (sel) fstr(ax+cw-20, ay+14, ">", YEL, 1);
-	}
-
-	wnav(-1);
-}
-
-/* ============================================================
- * MAIN
- * ============================================================ */
 
 int main(int argc, char *argv[]) {
-	(void)argc; (void)argv;
+	bool smoke = argc == 2 && strcmp(argv[1], "--smoke") == 0;
+	if (argc > 1 && !smoke) {
+		fprintf(stderr, "Uso: %s [--smoke]\n", argv[0]);
+		return 2;
+	}
+	if (!gsp_init(SDL_INIT_VIDEO)) {
+		fprintf(stderr, "SDL%d: %s\n", GSP_SDL_MAJOR, SDL_GetError());
+		return 1;
+	}
+	if (smoke) {
+		int result = smoke_test();
+		SDL_Quit();
+		if (result == 0) puts("Gigaspark: 7 pantallas OK, objetivos tactiles >= 80 px");
+		return result;
+	}
 
-	printf("Gigaspark OS - Gemelo Digital v2\n");
-	printf("480x272 exacto (Giga Display Shield)\n");
-
-	if (SDL_Init(SDL_INIT_VIDEO) < 0) {
-		fprintf(stderr, "SDL2: %s\n", SDL_GetError());
+	SDL_Window *win = gsp_window("Gigaspark OS - Simulador tactil 800x480",
+	                             WIN_W, WIN_H, false);
+	if (!win) {
+		fprintf(stderr, "SDL%d window: %s\n", GSP_SDL_MAJOR, SDL_GetError());
+		SDL_Quit();
+		return 1;
+	}
+	SDL_Renderer *ren = gsp_renderer(win, false);
+	if (!ren) ren = gsp_renderer(win, true);
+	SDL_Texture *tex = ren ? SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGB565,
+		SDL_TEXTUREACCESS_STREAMING, SCR_W, SCR_H) : NULL;
+	if (!tex) {
+		fprintf(stderr, "SDL%d renderer/texture: %s\n", GSP_SDL_MAJOR, SDL_GetError());
+		if (ren) SDL_DestroyRenderer(ren);
+		SDL_DestroyWindow(win);
+		SDL_Quit();
 		return 1;
 	}
 
-	SDL_Window *win = SDL_CreateWindow("Gigaspark OS - Gemelo Digital",
-		SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, WIN_W, WIN_H, SDL_WINDOW_SHOWN);
-	if (!win) { SDL_Quit(); return 1; }
-
-	SDL_Renderer *ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
-	if (!ren) ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_SOFTWARE);
-
-	SDL_Texture *tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGB565,
-		SDL_TEXTUREACCESS_STREAMING, SCR_W, SCR_H);
-
-	memset(fb, 0, sizeof(fb));
-
-	bool run = true;
-	int screen = 0;
-	SDL_Event ev;
+	bool run = true, dirty = true;
+	int screen = 0, result = 0;
 	uint8_t bat = 100;
-
+	uint32_t last_battery = gsp_ticks(), last_minute = UINT32_MAX;
+	SDL_Event ev;
 	while (run) {
-		Uint32 fs = SDL_GetTicks();
-
-		if (fs % 30000 < FRAME) { if (bat > 5) bat--; }
-
-		while (SDL_PollEvent(&ev)) {
-			switch (ev.type) {
-			case SDL_QUIT: run = false; break;
-			case SDL_KEYDOWN:
-				switch (ev.key.keysym.sym) {
-				case SDLK_q: run = false; break;
-				case SDLK_ESCAPE: screen = 0; break;
-				case SDLK_UP:
-					if (screen==0 && la_sel>0) la_sel--;
-					if (screen==5 && st_sel>0) st_sel--;
-					break;
-				case SDLK_DOWN:
-					if (screen==0 && la_sel<LA_N-1) la_sel++;
-					if (screen==5 && st_sel<3) st_sel++;
-					break;
-				case SDLK_RETURN:
-					if (screen==0) screen = la_sel + 1;
-					break;
-				case SDLK_1: screen=1; break;
-				case SDLK_2: screen=2; break;
-				case SDLK_3: screen=3; break;
-				case SDLK_4: screen=4; break;
-				case SDLK_5: screen=5; break;
-				case SDLK_6: screen=6; break;
-				default: break;
-				}
-				break;
-			case SDL_MOUSEBUTTONDOWN:
-				if (ev.button.button == SDL_BUTTON_LEFT) {
-					int mx = ev.button.x / SCALE;
-					int my = ev.button.y / SCALE;
-					if (my >= nby) {
-						int bw=120, g=(SCR_W-bw*3)/4;
-						for (int i=0;i<3;i++) {
-							int bx=g+i*(bw+g);
-							if (mx>=bx && mx<bx+bw && my>=nby+7 && my<nby+37) {
-								if (i==0) screen=0;
-								if (i==1 && screen>0) screen=0;
-							}
-						}
-					}
-					if (screen==0) {
-						int cw=200,rh=50,sx=20,sy=70;
-						for (int i=0;i<LA_N;i++) {
-							int c=i%2,r=i/2;
-							int ax=sx+c*(cw+20),ay=sy+r*(rh+10);
-							if (mx>=ax&&mx<ax+cw&&my>=ay&&my<ay+rh) screen=i+1;
-						}
-					}
-				}
-				break;
-			}
+		uint32_t frame_start = gsp_ticks();
+		if (!screen_is_animated(screen) && !dirty) {
+			uint32_t now = gsp_ticks();
+			uint32_t elapsed = now - last_battery;
+			uint32_t wait = elapsed >= 30000 ? 1 : 30000 - elapsed;
+			uint32_t to_minute = 60000 - now % 60000;
+			if (to_minute < wait) wait = to_minute;
+			if (wf_scan_until && wf_scan_until > now && wf_scan_until - now < wait)
+				wait = wf_scan_until - now;
+			if (gsp_wait_event(&ev, (int)wait))
+				dirty = handle_event(&ev, &screen, &run) || dirty;
 		}
+		while (gsp_poll_event(&ev))
+			dirty = handle_event(&ev, &screen, &run) || dirty;
+		if (!run) break;
 
-		memset(fb, 0, sizeof(fb));
-		switch (screen) {
-		case 0: app_launch(fs, bat); break;
-		case 1: app_scope(fs, bat); break;
-		case 2: app_psu(fs, bat); break;
-		case 3: app_flip(fs, bat); break;
-		case 4: app_wifi(fs, bat); break;
-		case 5: app_set(fs, bat); break;
-		case 6: app_about(fs, bat); break;
-		default: app_launch(fs, bat); break;
+		uint32_t now = gsp_ticks();
+		if (press_live && now >= press_until) { press_live = false; dirty = true; }
+		if (wf_scan_until && now >= wf_scan_until) { wf_scan_until = 0; dirty = true; }
+		if (now - last_battery >= 30000) {
+			if (bat > 5) --bat;
+			last_battery = now;
+			dirty = true;
 		}
-
-		SDL_UpdateTexture(tex, NULL, fb, SCR_W * sizeof(uint16_t));
-		SDL_RenderClear(ren);
-		SDL_RenderCopy(ren, tex, NULL, NULL);
-		SDL_RenderPresent(ren);
-
-		Uint32 ft = SDL_GetTicks() - fs;
-		if (ft < FRAME) SDL_Delay(FRAME - ft);
+		if (now / 60000 != last_minute) { last_minute = now / 60000; dirty = true; }
+		if (dirty || screen_is_animated(screen)) {
+			if (present_frame(ren, tex, screen, now, bat) < 0) { result = 1; break; }
+			dirty = false;
+		}
+		if (screen_is_animated(screen)) {
+			uint32_t elapsed = gsp_ticks() - frame_start;
+			if (elapsed < FRAME) SDL_Delay(FRAME - elapsed);
+		}
 	}
-
 	SDL_DestroyTexture(tex);
 	SDL_DestroyRenderer(ren);
 	SDL_DestroyWindow(win);
 	SDL_Quit();
-	return 0;
+	return result;
 }

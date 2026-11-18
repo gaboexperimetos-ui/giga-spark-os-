@@ -1,0 +1,33 @@
+# Dependabot
+#
+# Por que existe: el CI ya emitia el aviso "Node.js 20 is deprecated" para
+# actions/checkout@v4 y nadie lo vio hasta revisar las anotaciones del run.
+# Las Actions envejecen solas; esto abre la PR cuando hay version nueva.
+#
+# Solo se vigila github-actions. Las dependencias de firmware (Zephyr,
+# HAL de ST) las fija west.yml y las arrastra el manifiesto de Zephyr: cambiar
+# esos pins por separado rompe la integracion que Zephyr prueba en conjunto.
+# Subir Zephyr es una decision deliberada, no un bump automatico.
+
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: "America/Guayaquil"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"
+      include: scope
+    labels:
+      - dependencies
+      - github-actions
+    # Agrupar los bumps de Actions en una sola PR: revisar cinco PRs de un
+    # renglon cada una es ruido, y suelen poder fusionarse juntas.
+    groups:
+      github-actions:
+        patterns:
+          - "*"

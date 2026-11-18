@@ -10,9 +10,9 @@ build_*/
 *.d
 *.a
 
-# Zephyr internals
-zephyr/
-modules/
+# Zephyr internals (root workspace only; keep host test stubs under tests/)
+/zephyr/
+/modules/
 .cache/
 .west/
 *.lock

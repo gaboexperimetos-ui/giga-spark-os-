@@ -38,3 +38,114 @@
 		};
 	};
 };
+
+/* ============================================================
+ * Arduino GIGA Display Shield (ASX00039): panel + touch
+ *
+ * Pines tomados del esquematico oficial de Arduino (ASX00039), no supuestos:
+ *   DSI RESET      -> PC6
+ *   DSI TE         -> PI0
+ *   BACKLIGHT      -> PB12 (SWIRE, un solo cable, no PWM)
+ *   TOUCH I2C      -> I2C4 (SCL PB6, SDA PH12), compartido con la camara
+ *   TOUCH INT      -> PI1
+ *   TOUCH nRST     -> PI2
+ *   GT911          -> 0x5D (alternativa 0x14)
+ *
+ * El shield de Zephyr solo habilita el panel y el microfono: NO trae el touch.
+ * Por eso el GT911 se declara aqui.
+ * ============================================================
+ */
+
+#include <zephyr/dt-bindings/display/panel.h>
+#include <zephyr/dt-bindings/gpio/gpio.h>
+#include <zephyr/dt-bindings/i2c/i2c.h>
+
+/ {
+	chosen {
+		zephyr,display = &ltdc;
+		zephyr,touch = &gt911;
+	};
+};
+
+/* El panel es nativo 480x800 vertical. La interfaz es 800x480 horizontal,
+ * asi que se rota 90 grados. rotation la aplica el driver del ST7701. */
+&st7701 {
+	rotation = <90>;
+	/* Tiene que coincidir con la salida del LTDC, que solo admite RGB888.
+	 * El framebuffer sigue siendo RGB565 (CONFIG_STM32_LTDC_RGB565): el
+	 * LTDC convierte al enviarlo. Menos memoria y el mismo render que el
+	 * simulador. */
+	pixel-format = <MIPI_DSI_PIXFMT_RGB888>;
+	reset-gpios = <&gpioc 6 GPIO_ACTIVE_LOW>;
+	bl-gpios = <&gpiob 12 GPIO_ACTIVE_HIGH>;
+};
+
+&ltdc {
+	status = "okay";
+	width = <800>;
+	height = <480>;
+	/* El driver del LTDC solo implementa salida RGB888: con RGB565 aqui
+	 * aborta la compilacion con un #error explicito. No confundir con el
+	 * formato del framebuffer, que se elige por Kconfig y si es RGB565. */
+	pixel-format = <PANEL_PIXEL_FORMAT_RGB_888>;
+	/* 800*480*2 = 768 KB: no cabe en la SRAM interna. SDRAM de 8 MB. */
+	ext-sdram = <&sdram1>;
+	def-back-color-red = <0>;
+	def-back-color-green = <0>;
+	def-back-color-blue = <0>;
+
+	/* Timings del shield (480x800 vertical) con los ejes intercambiados
+	 * por la rotacion: h <- v, v <- h. */
+	display-timings {
+		compatible = "zephyr,panel-timing";
+		hsync-active = <0>;
+		vsync-active = <0>;
+		de-active = <0>;
+		pixelclk-active = <0>;
+		hback-porch = <40>;
+		hsync-len = <32>;
+		hfront-porch = <8>;
+		vback-porch = <6>;
+		vsync-len = <8>;
+		vfront-porch = <1>;
+	};
+};
+
+/* LTDC toma el reloj de pixel de pll3_r.
+ * (800+40+32+8) * (480+6+8+1) = 435600 px/frame; a 27.5 MHz -> ~63 Hz.
+ * Misma configuracion que la referencia de ST para este SoC. */
+&pll3 {
+	status = "okay";
+	clocks = <&clk_hse>;
+	div-m = <5>;
+	mul-n = <132>;
+	div-p = <2>;
+	div-q = <2>;
+	div-r = <24>;
+};
+
+&i2c4 {
+	pinctrl-0 = <&i2c4_scl_pb6 &i2c4_sda_ph12>;
+	pinctrl-names = "default";
+	clock-frequency = <I2C_BITRATE_FAST>;
+	status = "okay";
+
+	gt911: gt911@5d {
+		compatible = "goodix,gt911";
+		reg = <0x5d>;
+		alt-addr = <0x14>;
+		irq-gpios = <&gpioi 1 GPIO_ACTIVE_HIGH>;
+		reset-gpios = <&gpioi 2 GPIO_ACTIVE_LOW>;
+		status = "okay";
+
+		/* El controlador reporta en su espacio nativo vertical; el
+		 * subsistema input lo transforma al del panel. La escala se
+		 * aplica despues de invertir e intercambiar, que es lo que
+		 * hace usable un panel rotado con lados distintos. */
+		screen-width = <480>;
+		screen-height = <800>;
+		display = <&ltdc>;
+		swapped-x-y;
+		inverted-y;
+	};
+};

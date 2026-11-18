@@ -4,7 +4,7 @@
  * Ejecuta 1000 asignaciones/liberaciones aleatorias
  * verificando que no haya leaks ni corrupcion de memoria.
  *
- * Compilar para PC: west build -b native_posix tests/unit/mem_engine
+ * Compilar para PC: west build -b native_sim tests/unit/mem_engine
  * Ejecutar: ./build/zephyr/zephyr.exe
  */
 
@@ -14,7 +14,7 @@
 #include <time.h>
 
 /* Incluir directamente el .c para testear (no usar header) */
-#include "../../m4/src/mem_engine.h"
+#include "mem_engine.h"
 
 /* Max handles que el buddy allocator puede manejar */
 #define MAX_TEST_HANDLES  64
@@ -262,14 +262,3 @@ static void *buddy_suite_setup(void)
 }
 
 ZTEST_SUITE(buddy_allocator, NULL, buddy_suite_setup, NULL, NULL, NULL);
-
-/* Main - para ejecucion nativa en PC */
-#ifdef CONFIG_NATIVE_POSIX
-#include <zephyr/kernel.h>
-int main(void)
-{
-	ztest_run_all(NULL, false, 1, 1);
-	ztest_verify_all_test_suites_ran();
-	return 0;
-}
-#endif

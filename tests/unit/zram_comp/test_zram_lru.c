@@ -3,7 +3,7 @@
  *
  * Verifica compresion RLE, almacenamiento LRU, y eviccion.
  *
- * Compilar para PC: west build -b native_posix tests/unit/zram_comp
+ * Compilar para PC: west build -b native_sim tests/unit/zram_comp
  * Ejecutar: ./build/zephyr/zephyr.exe
  */
 
@@ -13,7 +13,7 @@
 #include <time.h>
 
 /* Incluir directamente los .c para testear */
-#include "../../m4/src/zram_comp.h"
+#include "zram_comp.h"
 
 /* Buffer para datos comprimidos/descomprimidos */
 #define TEST_BUF_SIZE  2048
@@ -224,14 +224,3 @@ static void zram_lru_setup(void *f)
 }
 
 ZTEST_SUITE(zram_lru, NULL, NULL, zram_lru_setup, NULL, NULL);
-
-/* Main - para ejecucion nativa en PC */
-#ifdef CONFIG_NATIVE_POSIX
-#include <zephyr/kernel.h>
-int main(void)
-{
-	ztest_run_all(NULL, false, 1, 1);
-	ztest_verify_all_test_suites_ran();
-	return 0;
-}
-#endif

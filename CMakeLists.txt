@@ -22,6 +22,7 @@ target_sources(app PRIVATE
 	m7/src/hw/rf_tools.c
 	m7/src/net_manager.c
 	m7/src/app_downloader.c
+	m7/src/display_giga.c
 	sdk/gigaspark_api.c
 )
 

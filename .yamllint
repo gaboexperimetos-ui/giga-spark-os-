@@ -1,0 +1,25 @@
+# yamllint — configuracion del repo.
+#
+# Se ajusta a lo que GitHub Actions exige, no a un ideal generico:
+#  - `on:` es la clave de disparo de un workflow. YAML 1.1 la interpreta como
+#    booleano, pero Actions la necesita literal: el aviso `truthy` aqui es ruido.
+#  - document-start: los workflows de Actions no llevan `---`.
+extends: default
+
+rules:
+  line-length:
+    max: 100
+    level: warning
+  truthy:
+    allowed-values: ['true', 'false', 'on']
+    check-keys: false
+  document-start: disable
+  comments:
+    min-spaces-from-content: 1
+  indentation:
+    spaces: 2
+    indent-sequences: consistent
+
+ignore: |
+  build_*/
+  .cache/
