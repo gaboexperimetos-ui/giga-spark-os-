@@ -120,6 +120,11 @@ FNV de los 768 000 bytes, idéntico antes y después:
 | 5 Ajustes | `c3dd2a7e3ec5853a` | 8 |
 | 6 Acerca de | `55bba0450dc40646` | 3 |
 
+Esta tabla documenta la **extracción inicial del núcleo**, antes del retoque
+visual actual del launcher. El rediseño Android descrito abajo cambia a propósito
+los píxeles de inicio y los iconos de app bar; simulador y M7 siguen compartiendo
+el mismo `common/ui_os.c`. Los hashes actuales están en `docs/PERFORMANCE.md`.
+
 #### Cadena de hardware
 
 ```

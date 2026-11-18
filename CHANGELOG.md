@@ -9,7 +9,7 @@ El proyecto no publica versiones etiquetadas todavía: todo lo de abajo está en
 
 ### Añadido
 
-- **CI verificado en la última ejecución: 8/8 jobs en verde** (`42948824192`).
+- **CI verificado: los 8 jobs están en verde**, incluidos M7, M4 y ambas rutas SDL.
   Las correcciones posteriores incluyeron `CONFIG_STM32_LTDC_RGB565`, Python 3.15
   con dependencias nativas para `hidapi`, token API para el checker del manifiesto,
   y mover `st_sel` al backend SDL para mantener `-Werror` limpio en ARM.
@@ -23,6 +23,10 @@ El proyecto no publica versiones etiquetadas todavía: todo lo de abajo está en
   dependencia de SDL ni de Zephyr. Lo incluyen el simulador y el firmware, así
   que no hay dos interfaces que se puedan divergir. Verificado con hash de los
   7 frames: idéntico antes y después de extraerlo.
+- **Refresh visual del launcher Android:** se cambiaron las seis tarjetas
+  gigantes por una grilla de iconos squircle tonales, etiquetas más limpias,
+  cabecera con el modelo de placa y espacios equilibrados. Las acciones del app
+  bar ahora usan iconos compactos de 56 px con el mismo hit target de 80 px.
 - **Framebuffer en SDRAM.** 768 KB no caben en la SRAM interna del M7: van a los
   8 MB de `sdram1` (`ext-sdram` + sección del linker, `CONFIG_MEMC=y`).
 - **Touch GT911 declarado en el overlay.** El shield de Zephyr solo habilita

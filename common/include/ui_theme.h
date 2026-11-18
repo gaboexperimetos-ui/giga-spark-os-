@@ -1,14 +1,13 @@
 /*
  * Gigaspark OS - Tema visual canonico (Material Design 3, esquema oscuro azul)
  *
- * FUENTE UNICA DE VERDAD del color para el firmware M7 (LVGL) y el simulador
- * de PC. Antes cada uno tenia sus propios literales: el firmware usaba una
- * paleta retro (0x1a1a2e fondo / 0xe94560 acento) y el simulador otra, asi que
- * "lo que se ve en el PC" no era lo que salia en el Arduino.
+ * FUENTE UNICA DE VERDAD del color para el firmware M7 y el simulador de PC.
+ * Ambos usan el nucleo portable common/ui_os.c, asi que no hay una paleta
+ * distinta en escritorio y en el Arduino.
  *
- * Los tonos se definen en RGB888 porque es la notacion de Material y la que
- * consume lv_color_hex(). El simulador los cuantiza a RGB565, que es el formato
- * real del panel ST7701 sobre MIPI DSI (2 lanes) del Giga Display Shield.
+ * Los tonos se definen en RGB888, notacion de Material, y se cuantizan a
+ * RGB565 para el framebuffer compartido. LTDC convierte a RGB888 al transmitir
+ * por MIPI-DSI al panel ST7701.
  *
  * IMPORTANTE: cuantizar REDONDEANDO al mas cercano, nunca truncando.
  * En superficies oscuras los canales son diminutos y truncar (v>>3) pierde
@@ -16,8 +15,9 @@
  * el tono de tarjeta 0x263036 truncado daba (33,48,49), con verde==azul, y las
  * tarjetas se veian verdosas; redondeando da (41,48,57), el gris azulado real.
  *
- * El brillo NO pertenece al tema: es el PWM de la retroiluminacion y escala la
- * luz emitida, no estos valores. Ver backlight_scale() en simulator/main.c.
+ * El brillo NO pertenece al tema: la retroiluminacion fisica usa SWIRE (PB12),
+ * no PWM. Ver backlight_scale() en common/ui_os.c; el protocolo SWIRE queda
+ * pendiente de validacion en la placa.
  */
 #ifndef GIGASPARK_UI_THEME_H
 #define GIGASPARK_UI_THEME_H

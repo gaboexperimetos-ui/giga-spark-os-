@@ -8,10 +8,12 @@ El simulador permite ejecutar apps de Gigaspark OS en tu PC sin necesidad del ha
 
 ### Aspecto Material Design 3
 
-La interfaz imita Android, no una terminal: **Roboto con antialiasing** (atlas de
-cobertura de 4 bits en `common/include/roboto_font.h`), superficies tonales elevadas,
-switches de pastilla, chips, slider y **barra de navegacion de 3 botones**
-(atras / inicio / recientes) abajo, con barra de estado arriba y app bar.
+La interfaz toma patrones de Android: **Roboto con antialiasing** (atlas de
+cobertura de 4 bits en `common/include/roboto_font.h`), superficies tonales,
+switches de pastilla, chips, slider y barras de estado/navegación. El launcher
+usa una grilla de iconos squircle con colores por app y áreas táctiles amplias,
+en vez de seis tarjetas gigantes; las acciones del app bar tienen iconos compactos
+y objetivos táctiles de 80 px.
 
 El núcleo de interfaz está en `common/ui_os.c` y es portable: lo usan el
 simulador y el firmware del M7. La capa de dibujo está en `common/ui_material.c`: mezcla con alfa en RGB565,

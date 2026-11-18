@@ -312,18 +312,32 @@ static void status_bar(uint32_t t, uint8_t bat) {
 	}
 }
 
-/* App bar: titulo grande a la izquierda, acciones a la derecha. */
+/* Acción de app bar: glifo compacto de 56 px dentro de un objetivo táctil
+ * Android de 80 px. El área no cambia; se quita el bloque visual gigante que
+ * hacía que cada refresh pareciera una tarjeta. */
+static void appbar_action(int x, int y, int kind, bool enabled, int act) {
+	bool down = press_live && enabled && act != A_NONE && act == press_act;
+	if (down) m_rrect(x + 12, y + 12, 56, 56, R_SMALL, M_CARD2);
+	icon(x + 40, y + 40, kind, 16, enabled ? M_TXT : M_OUT);
+	if (enabled) hit_add(x, y, 80, 80, act);
+}
+
+/* App bar: jerarquía de texto compacta; acciones al estilo Android arriba. */
 static void app_bar(int screen, int act1, int ic1, int act2, int ic2, int act3, int ic3) {
 	frect(0, STATUS_H, SCR_W, APPBAR_H, M_BG);
-	m_text(PAD + 4, STATUS_H + (APPBAR_H - rf_fonts[F_TITLE].cap) / 2,
-	       app_titles[screen], app_col[screen], F_TITLE);
-	int x = SCR_W - PAD;
+	if (screen == 0) {
+		m_text(PAD + 4, STATUS_H + 7, "Gigaspark", M_PRI, F_TITLE);
+		m_text(PAD + 6, STATUS_H + 49, "Arduino GIGA R1", M_MUT, F_SMALL);
+	} else {
+		m_text(PAD + 4, STATUS_H + (APPBAR_H - rf_fonts[F_TITLE].cap) / 2,
+		       app_titles[screen], app_col[screen], F_TITLE);
+	}
+	int x = SCR_W - PAD - 80;
 	int acts[3] = { act3, act2, act1 }, ics[3] = { ic3, ic2, ic1 };
 	for (int i = 0; i < 3; i++) {
 		if (ics[i] < 0) continue;
-		x -= APPBAR_H;
-		m_ibtn(x, STATUS_H, APPBAR_H, APPBAR_H, ics[i], false, acts[i] != A_NONE, acts[i]);
-		x -= 8;
+		appbar_action(x, STATUS_H, ics[i], acts[i] != A_NONE, acts[i]);
+		x -= 88;
 	}
 }
 
@@ -369,20 +383,35 @@ static const uint16_t la_col[] = { M_CYN, M_YEL, M_PRP, M_PRI, M_GRN, M_MUT };
 static void app_launch(uint32_t t, uint8_t bat) {
 	chrome(t, bat, 0);
 	app_bar(0, A_NONE, -1, A_NONE, -1, A_NONE, -1);
-	int cols = 3, rows = 2;
-	int tw = (CW - 2 * PAD - (cols - 1) * GAP) / cols;
-	int th = (CH - (rows - 1) * GAP) / rows;
+
+	/* Launcher tipo Android: una grilla ligera de iconos, no seis tarjetas
+	 * gigantes. Cada celda conserva un hit target ancho para el panel de 4". */
+	m_text(PAD + 4, CY + 3, "Aplicaciones", M_TXT, F_BODY);
+	m_text_r(CW - PAD, CY + 7, "6 herramientas", M_MUT, F_SMALL);
+
+	const int cols = 3, rows = 2;
+	const int top = CY + 36;
+	const int gap_y = 8;
+	const int tw = (CW - 2 * PAD) / cols;
+	const int th = (CH - 36 - gap_y) / rows;
 	for (int i = 0; i < LA_N; i++) {
 		int c = i % cols, r = i / cols;
-		int x = CX + PAD + c * (tw + GAP), y = CY + r * (th + GAP);
+		int x = PAD + c * tw, y = top + r * (th + gap_y);
 		bool down = press_live && press_act == A_APP + i;
 		bool sel = i == la_sel;
-		m_rrect(x, y, tw, th, R_CARD, down ? M_CARD2 : (sel ? M_CARD : M_SURF));
-		int icx = x + tw / 2, icy = y + th / 2 - 16;
-		/* Icono sobre circulo tonal, sello del launcher Android. */
-		m_circle(icx, icy, 34, M_CARD2);
-		icon(icx, icy, la_ic[i], 19, la_col[i]);
-		m_text_c(x + tw / 2, y + th - 34, la_nm[i], M_TXT, F_BODY);
+		if (down || sel)
+			m_rrect(x + 10, y + 1, tw - 20, th - 2, R_CARD,
+			        down ? M_CARD2 : M_SURF);
+
+		const int isz = 60;
+		int ix = x + (tw - isz) / 2;
+		int iy = y + 9;
+		/* Icono squircle tonal estilo Pixel: el color identifica la función,
+		 * la silueta y el espaciado son uniformes entre aplicaciones. */
+		uint16_t tint = mix565(M_CARD, la_col[i], 72);
+		m_rrect(ix, iy, isz, isz, 19, tint);
+		icon(ix + isz / 2, iy + isz / 2, la_ic[i], 17, la_col[i]);
+		m_text_c(x + tw / 2, iy + isz + 11, la_nm[i], M_TXT, F_BODY);
 		hit_add(x, y, tw, th, A_APP + i);
 	}
 }
@@ -724,12 +753,11 @@ static void draw_qs(uint32_t t, uint8_t bat) {
 
 /* Factor de retroiluminacion en 0..255.
  *
- * El brillo NO se aplica al framebuffer. En el hardware real es el PWM de la
- * retroiluminacion: escala la luz emitida, no los valores del panel. Aplicarlo
- * dentro del RGB565 obligaba a recuantizar tonos ya oscuros, donde solo hay 32
- * o 64 niveles, y el gris viraba a verde (la tarjeta pasaba de (33,36,41) a
- * (24,32,33), con verde==azul). Aqui se entrega el factor para aplicarlo tras
- * expandir a 8 bits, que es donde hay precision. */
+ * El brillo NO se aplica al framebuffer. La retroiluminacion fisica usa SWIRE
+ * en PB12 (no PWM); escala la luz emitida, no los valores del panel. Aplicar
+ * brillo dentro del RGB565 recuantiza tonos oscuros, donde solo hay 32 o 64
+ * niveles, y desplaza el color. Aqui se entrega el factor para que cada backend
+ * module la luz por separado; el protocolo SWIRE fisico aun no esta implementado. */
 static uint8_t backlight_scale(void) {
 	return (uint8_t)(40 + st_br * 215 / 100);
 }

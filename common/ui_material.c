@@ -10,9 +10,9 @@
  *   3. Componentes reconocibles: switch de pastilla, botones filled/tonal,
  *      barra de estado arriba y barra de navegacion abajo.
  *
- * Este fichero se incluye desde main.c y aporta primitivas con alfa real,
- * tipografia Roboto y los widgets. Todo sigue escribiendo en un framebuffer
- * RGB565, el formato del panel real.
+ * Este fichero se incluye desde ui_os.c y aporta primitivas con alfa real,
+ * tipografia Roboto y los widgets. Escribe en el framebuffer RGB565 compartido;
+ * el LTDC convierte a RGB888 al transmitirlo por MIPI-DSI.
  * ============================================================ */
 
 #include "roboto_font.h"

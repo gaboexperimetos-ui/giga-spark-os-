@@ -13,7 +13,7 @@
  * (ASX00039). The panel is 480x800 native, ST7701 over MIPI DSI, with a
  * Goodix GT911 capacitive touch controller. See docs/HARDWARE_FIDELITY.md.
  *
- * These match SCR_W/SCR_H in simulator/main.c so the simulator and the
+ * These match SCR_W/SCR_H in common/ui_os.c so the simulator and the
  * firmware agree on geometry.
  */
 #define SCREEN_WIDTH     800

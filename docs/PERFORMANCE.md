@@ -82,25 +82,25 @@ Medición real contra `6e5c1456`, GCC 12.2 `-O3 -DNDEBUG`, mediana de 5 ejecucio
 
 | Pantalla | Antes ns/frame | Ahora ns/frame | ns/píxel antes | ns/píxel ahora | Coste por píxel |
 |---|---:|---:|---:|---:|---:|
-| 0 Launcher | 17979 | 158260 | 0.1377 | 0.4121 | 2.99× |
-| 1 Osciloscopio | 26917 | 137294 | 0.2062 | 0.3575 | 1.73× |
-| 2 Fuente | 26444 | 126592 | 0.2025 | 0.3297 | 1.63× |
-| 3 Flipper RF | 23396 | 135629 | 0.1792 | 0.3532 | 1.97× |
-| 4 WiFi | 19769 | 167494 | 0.1514 | 0.4362 | 2.88× |
-| 5 Ajustes | 15996 | 151745 | 0.1225 | 0.3952 | 3.23× |
-| 6 Acerca de | 23674 | 142425 | 0.1813 | 0.3709 | 2.05× |
+| 0 Launcher | 19943 | 188214 | 0.1527 | 0.4901 | 3.21× |
+| 1 Osciloscopio | 28309 | 158982 | 0.2168 | 0.4140 | 1.91× |
+| 2 Fuente | 28347 | 151628 | 0.2171 | 0.3949 | 1.82× |
+| 3 Flipper RF | 23470 | 146902 | 0.1798 | 0.3826 | 2.13× |
+| 4 WiFi | 20588 | 192146 | 0.1577 | 0.5004 | 3.17× |
+| 5 Ajustes | 16559 | 181796 | 0.1268 | 0.4734 | 3.73× |
+| 6 Acerca de | 25448 | 169201 | 0.1949 | 0.4406 | 2.26× |
 
 Lectura honesta: **el dibujo es más caro a propósito.** La interfaz pasó a
 Material Design 3 — texto Roboto con antialiasing (mezcla alfa por píxel),
 superficies tonales redondeadas, iconos de trazo — sobre una fuente bitmap 5×7
 sin antialiasing. Parte del salto por frame son los 2.94× píxeles; ns/píxel ya
-descuenta el tamaño, así que ese **1.6–3.2×** es el coste real del antialiasing y
+descuenta el tamaño, así que ese **1.8–3.7×** es el coste real del antialiasing y
 los componentes. Es una regresión de rendimiento deliberada a cambio de una
-interfaz que parece Android en vez de una terminal.
+interfaz que se reconoce como Android y tiene controles táctiles claros.
 
-En absoluto sigue sobrado: el peor frame es **167 µs** (WiFi), un **0.5 %** del
-presupuesto de 33 ms a 30 FPS. Para una pantalla que mira una persona, no un
-bucle de datos, es la decisión correcta.
+Medición actual después del refinamiento visual: el peor frame es **192 µs**
+(WiFi), un **0.58 %** del presupuesto de 33 ms a 30 FPS. Sigue siendo insignificante
+para la pantalla. Los números de la tabla son del host, no del Cortex-M7.
 
 Sí se optimizó lo que el perfil señaló como cuello real, no lo que se suponía:
 `m_ring_rect` recorriendo solo el perímetro salió **neutro** (0.96–1.05×, ruido).
@@ -110,17 +110,21 @@ discos con `sqrtf`. Una curva muestreada por columna solo necesita un span
 vertical entre muestras: **463 → 129 µs por frame, 3.6×**, y dibuja mejor las
 transiciones verticales de la onda cuadrada.
 
-### Hashes del framebuffer (baseline visual Material)
+### Hashes del framebuffer (baseline visual actual)
 
-| Pantalla | Hash previo (480×272) | Hash Material (800×480) |
-|---|---|---|
-| 0 | `32348a1d` | `7b5a33b5` |
-| 1 | `de6a4d72` | `84114911` |
-| 2 | `f9760627` | `ae0af51a` |
-| 3 | `c7676811` | `1e9b1290` |
-| 4 | `083fde0c` | `3cf8780b` |
-| 5 | `c180a63d` | `7d8bbd61` |
-| 6 | `1d3962ed` | `e379454d` |
+FNV-1a de `tests/bench/sim_bench.c`, SDL2, RGB565. La segunda columna es la
+primera UI Material en 800×480; la última es el launcher Android refinado actual.
+Osciloscopio anima, por eso se anotan primer y último frame del benchmark.
+
+| Pantalla | Original 480×272 | Material inicial | Actual |
+|---|---|---|---|
+| 0 Launcher | `32348a1d` | `7b5a33b5` | `8486e438` |
+| 1 Osciloscopio | `de6a4d72` | `84114911` | `50bed766` → `f58226a8` |
+| 2 Fuente | `f9760627` | `ae0af51a` | `ae0af51a` |
+| 3 Flipper RF | `c7676811` | `1e9b1290` | `c772249b` |
+| 4 WiFi | `083fde0c` | `3cf8780b` | `68e4d448` |
+| 5 Ajustes | `c180a63d` | `7d8bbd61` | `7d8bbd61` |
+| 6 Acerca de | `1d3962ed` | `e379454d` | `e379454d` |
 
 ### Trampa de verificación que produjo falsos positivos
 
@@ -160,8 +164,8 @@ impiden que vuelva a ocurrir.
 
 ## Límites importantes
 
-- **No se compiló ni probó el firmware en el Arduino Giga R1** en este entorno;
-  faltaba el workspace/Zephyr SDK. Las cifras de PC no deben extrapolarse al MCU.
+- M7/M4 **sí compilan en CI** con el SDK Zephyr 1.0.1. No se probó todavía el
+  panel en un Arduino GIGA R1 físico; las cifras de PC no deben extrapolarse al MCU.
 - El proyecto todavía contiene drivers/stubs y afirmaciones de características no
   verificadas. Esta pasada no convierte esos stubs en hardware funcional.
 - zRAM sigue siendo una caché volátil: una evicción descarta datos. El swap SD
